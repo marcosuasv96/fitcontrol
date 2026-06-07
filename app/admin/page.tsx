@@ -9,7 +9,7 @@ interface LicenciaVencer {
   clave_licencia: string;
   fecha_expiracion: string;
   clientes: { nombre_empresa: string } | null;
-  planes: { nombre: string } | null;
+  planes: { nombre: lic.planes.nombre },
   dias_restantes: number;
 }
 
@@ -27,18 +27,18 @@ export default function DashboardAdmin() {
   const [licenciasActivas, setLicenciasActivas] = useState(0);
   const [licenciasPorVencerCount, setLicenciasPorVencerCount] = useState(0);
   const [ingresoEstimado, setIngresoEstimado] = useState(0);
-  
+
   // Estados para las secciones analíticas
   const [proximosVencimientos, setProximosVencimientos] = useState<LicenciaVencer[]>([]);
   const [planesMasVendidos, setPlanesMasVendidos] = useState<PlanPopular[]>([]);
-  
+
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function cargarMétricasYListas() {
       setLoading(true);
       const hoy = new Date();
-      
+
       // 1. Contar Clientes Totales
       const { count: cliCount } = await supabase.from('clientes').select('*', { count: 'exact', head: true });
       setTotalClientes(cliCount || 0);
@@ -73,7 +73,7 @@ export default function DashboardAdmin() {
             // ALGORITMO FINANCIERO CORREGIDO PARA TU ENUM DE VIGENCIA
             const precio = parseFloat(lic.planes.precio) || 0;
             const vigencia = lic.planes.tipo_plan; // 'mensual', 'trimestral', 'semestral', 'anual', 'permanente'
-            
+
             switch (vigencia) {
               case 'mensual':
                 sumaMensual += precio;
@@ -209,7 +209,7 @@ export default function DashboardAdmin() {
 
       {/* SECCIÓN ANALÍTICA */}
       <div className="grid lg:grid-cols-12 gap-6">
-        
+
         {/* TABLA DE PRÓXIMOS VENCIMIENTOS */}
         <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden flex flex-col justify-between">
           <div>
@@ -297,8 +297,8 @@ export default function DashboardAdmin() {
                       </span>
                     </div>
                     <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200/40">
-                      <div 
-                        className="bg-[#F47521] h-full rounded-full transition-all duration-500" 
+                      <div
+                        className="bg-[#F47521] h-full rounded-full transition-all duration-500"
                         style={{ width: `${plan.porcentaje}%` }}
                       />
                     </div>
