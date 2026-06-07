@@ -105,7 +105,7 @@ export default function DashboardAdmin() {
                 clave_licencia: lic.clave_licencia,
                 fecha_expiracion: lic.fecha_expiracion,
                 clientes: lic.clientes,
-                planes: { nombre_plan: lic.planes.nombre }, // Adaptado estructuralmente
+               planes: { nombre: lic.planes.nombre }, // Adaptado estructuralmente
                 dias_restantes: diasRestantes
               });
 
@@ -239,7 +239,7 @@ export default function DashboardAdmin() {
                     {proximosVencimientos.map((lic) => (
                       <tr key={lic.id} className="hover:bg-slate-50/50 transition">
                         <td className="p-3.5 font-bold text-[#232529]">{lic.clientes?.nombre_empresa}</td>
-                        <td className="p-3.5 text-slate-500 font-medium">{lic.planes?.nombre_plan}</td>
+                        <td className="p-3.5 text-slate-500 font-medium">{lic.planes?.nombre}</td>
                         <td className="p-3.5">
                           {lic.dias_restantes < 0 ? (
                             <span className="bg-rose-50 border border-rose-100 text-rose-600 font-bold px-2.5 py-1 rounded-md text-[10px]">
