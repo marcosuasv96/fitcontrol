@@ -125,12 +125,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       )}
 
       {/* 2. ÁREA DE CONTENIDO PRINCIPAL */}
-      <div className="flex-1 flex flex-col min-h-screen min-w-0">
+      <main className="flex-1 flex flex-col min-h-screen min-w-0">
         
         {/* HEADER COMPLETAMENTE RESPONSIVO */}
         <header className="bg-white h-16 border-b border-slate-200 px-4 sm:px-8 flex justify-between items-center shadow-xs shrink-0 sticky top-0 z-30">
           
-          {/* Botón Hamburguesa Móvil (Visible solo en pantallas chicas) */}
+          {/* Botón Hamburguesa尊 (Móvil) */}
           <div className="flex items-center gap-3">
             <button 
               onClick={() => setIsSidebarOpen(true)}
@@ -143,7 +143,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
           </div>
           
-          {/* Bloque de Usuario y Logout */}
+          {/* Datos del operario */}
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="flex items-center gap-1.5 sm:gap-2">
               {userEmail && (
@@ -174,11 +174,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </header>
 
-        {/* 3. SUB-DASHBOARD INYECTADO (Espaciado dinámico elástico) */}
+        {/* 3. SUB-DASHBOARD INYECTADO */}
         <div className="p-4 sm:p-8 flex-1 overflow-y-auto w-full">
           {children}
         </div>
-      </header>
+      </main>
 
     </div>
   );
