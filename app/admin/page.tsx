@@ -9,7 +9,7 @@ interface LicenciaVencer {
   clave_licencia: string;
   fecha_expiracion: string;
   clientes: { nombre_empresa: string } | null;
-  planes: { nombre: lic.planes.nombre },
+  planes: { nombre: string } | null; // <-- Corregido con el tipo de dato limpio
   dias_restantes: number;
 }
 
