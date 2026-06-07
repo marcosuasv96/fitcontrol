@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase'; // Conector centralizado unificado
 
 interface Plan {
   id: number;
@@ -16,7 +16,7 @@ interface Plan {
 export default function LandingPage() {
   const [planes, setPlanes] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isMenuOpen, setIsMenuOpen] = useState(false); // Estado para menú móvil
+  const [isMenuOpen, setIsMenuOpen] = useState(false); // Controlador del menú hamburguesa
 
   const whatsappBaseUrl = "https://api.whatsapp.com/send/?phone=523316919113&type=phone_number&app_absent=0";
   const txtMatriz = encodeURIComponent("Hola, me interesa recibir más información sobre el sistema FitControl.");
@@ -41,72 +41,78 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="overflow-x-hidden w-full relative">
+    <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans antialiased scroll-smooth overflow-x-hidden">
       
-      {/* BARRA DE NAVEGACIÓN COMPLETAMENTE RESPONSIVA */}
-      <nav className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 bg-white border-b border-slate-200 sticky top-0 z-50 rounded-b-xl sm:rounded-b-2xl shadow-xs">
-        <div className="flex justify-between items-center h-20">
-          
-          {/* LOGO */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            <Image src="/logo.png" alt="FitControl Logo" width={36} height={36} className="rounded-lg object-contain" />
-            <h1 className="text-xl font-black tracking-wider text-[#232529]">
-              FIT<span className="text-[#F47521]">CONTROL</span>
-            </h1>
-          </div>
+      {/* BARRA DE NAVEGACIÓN TOTALMENTE CONTROLADA CONTRA DESBORDES */}
+      <nav className="w-full bg-white border-b border-slate-200 sticky top-0 z-50 shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-20">
+            
+            {/* Logotipo Principal */}
+            <div className="flex items-center gap-2.5 shrink-0">
+              <Image src="/logo.png" alt="FitControl Logo" width={36} height={36} className="rounded-lg object-contain" />
+              <h1 className="text-xl font-black tracking-wider text-[#232529]">
+                FIT<span className="text-[#F47521]">CONTROL</span>
+              </h1>
+            </div>
 
-          {/* MENÚ DESKTOP (Oculto en móviles con 'hidden md:flex') */}
-          <div className="hidden md:flex items-center gap-8">
-            <a href="#caracteristicas" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Características</a>
-            <a href="#disciplinas" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Disciplinas</a>
-            <a href="#planes" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Precios</a>
-            <a 
-              href={`${whatsappBaseUrl}&text=${txtMatriz}`} 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="bg-[#232529] hover:bg-slate-800 text-white font-bold px-5 py-2 rounded-xl transition text-xs tracking-wide"
-            >
-              Adquirir Ya
-            </a>
-          </div>
+            {/* Menú para Computadoras (Desktop) */}
+            <div className="hidden md:flex items-center gap-8">
+              <a href="#caracteristicas" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Características</a>
+              <a href="#disciplinas" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Disciplinas</a>
+              <a href="#planes" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Precios</a>
+              <a 
+                href={`${whatsappBaseUrl}&text=${txtMatriz}`} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="bg-[#232529] hover:bg-slate-800 text-white font-bold px-5 py-2.5 rounded-xl transition text-xs tracking-wide"
+              >
+                Adquirir Ya
+              </a>
+            </div>
 
-          {/* BOTÓN HAMBURGUESA (Solo visible en móviles con 'md:hidden') */}
-          <div className="md:hidden flex items-center">
-            <button 
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              type="button"
-              className="inline-flex items-center justify-center p-2 rounded-xl text-slate-600 hover:bg-slate-100 focus:outline-none transition"
-            >
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                {isMenuOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
-            </button>
+            {/* Interfaz del Botón de Menú para Celulares (Mobile) */}
+            <div className="md:hidden flex items-center">
+              <button 
+                onClick={() => setIsMenuOpen(!isMenuOpen)}
+                type="button"
+                className="inline-flex items-center justify-center p-2 rounded-xl text-slate-700 hover:bg-slate-100 focus:outline-none transition z-50"
+                aria-label="Abrir Menú"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  {isMenuOpen ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                  )}
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* DESPLEGABLE DE MENÚ MÓVIL */}
+        {/* CORTINA DESPLEGABLE MÓVIL PREMIUM CON BACKDROP BLUR */}
         {isMenuOpen && (
-          <div className="md:hidden border-t border-slate-100 py-4 space-y-3 bg-white animate-fadeIn">
-            <a onClick={() => setIsMenuOpen(false)} href="#caracteristicas" className="block text-sm font-bold text-slate-700 px-3 py-2 rounded-xl hover:bg-slate-50">Características</a>
-            <a onClick={() => setIsMenuOpen(false)} href="#disciplinas" className="block text-sm font-bold text-slate-700 px-3 py-2 rounded-xl hover:bg-slate-50">Disciplinas</a>
-            <a onClick={() => setIsMenuOpen(false)} href="#planes" className="block text-sm font-bold text-slate-700 px-3 py-2 rounded-xl hover:bg-slate-50">Precios</a>
-            <a 
-              href={`${whatsappBaseUrl}&text=${txtMatriz}`} 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="w-full text-center block bg-[#F47521] text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider shadow-md"
-            >
-              💬 Contactar WhatsApp
-            </a>
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-40 md:hidden flex flex-col justify-start pt-24 px-6 space-y-4">
+            <div className="bg-white rounded-2xl p-6 shadow-2xl flex flex-col gap-4 w-full">
+              <a onClick={() => setIsMenuOpen(false)} href="#caracteristicas" className="block text-base font-bold text-slate-800 py-2.5 border-b border-slate-50">Características</a>
+              <a onClick={() => setIsMenuOpen(false)} href="#disciplinas" className="block text-base font-bold text-slate-800 py-2.5 border-b border-slate-50">Disciplinas</a>
+              <a onClick={() => setIsMenuOpen(false)} href="#planes" className="block text-base font-bold text-slate-800 py-2.5 border-b border-slate-50">Precios</a>
+              <a 
+                onClick={() => setIsMenuOpen(false)}
+                href={`${whatsappBaseUrl}&text=${txtMatriz}`} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="w-full text-center block bg-[#F47521] text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-orange-500/10 mt-2"
+              >
+                💬 Contactar por WhatsApp
+              </a>
+            </div>
           </div>
         )}
       </nav>
 
-      {/* HERO SECTION ADAPTADO A MÓVILES */}
+      {/* HERO SECTION COMPACTO Y SIN DESBORDES */}
       <header className="max-w-7xl mx-auto pt-10 sm:pt-16 pb-20 px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
         <div className="lg:col-span-5 text-left space-y-5 sm:space-y-6">
           <span className="bg-orange-100 text-[#F47521] font-bold text-[10px] sm:text-xs uppercase tracking-widest px-3 sm:px-4 py-1.5 rounded-full inline-block">
@@ -119,20 +125,20 @@ export default function LandingPage() {
             Una herramienta diseñada para dueños de negocios exigentes. Monitorea ingresos de caja blindados, automatiza el stock de tu inventario y controla los accesos en milisegundos sin depender de conexiones lentas a internet.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 pt-2">
-            <a href="#planes" className="w-full sm:w-auto text-center bg-[#F47521] hover:bg-[#d65f13] text-white font-bold px-8 py-3.5 rounded-xl transition shadow-lg shadow-orange-500/10 text-sm tracking-wide">
+            <a href="#planes" className="w-full sm:w-auto text-center bg-[#F47521] hover:bg-[#d65f13] text-white font-bold px-8 py-4 rounded-xl transition shadow-lg shadow-orange-500/10 text-sm tracking-wide">
               Comenzar Ahora
             </a>
-            <a href="#caracteristicas" className="w-full sm:w-auto text-center bg-white hover:bg-slate-100 text-[#232529] font-bold px-8 py-3.5 rounded-xl transition border border-slate-200 text-sm tracking-wide">
+            <a href="#caracteristicas" className="w-full sm:w-auto text-center bg-white hover:bg-slate-100 text-[#232529] font-bold px-8 py-4 rounded-xl transition border border-slate-200 text-sm tracking-wide">
               Conocer Módulos
             </a>
           </div>
         </div>
 
-        {/* CONTENEDOR DE LA PORTADA DIGITAL */}
+        {/* PORTADA DIGITAL ADAPTATIVA */}
         <div className="lg:col-span-7 relative w-full overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-tr from-orange-400/10 to-transparent rounded-3xl blur-2xl -z-10" />
           <div className="bg-white rounded-2xl p-2 sm:p-3 shadow-xl border border-slate-200/80">
-            <div className="bg-slate-100 rounded-xl overflow-hidden border border-slate-200 aspect-[16/10] relative flex items-center justify-center p-3 sm:p-5">
+            <div className="bg-slate-100 rounded-xl overflow-hidden border border-slate-200 aspect-[16/10] relative flex items-center justify-center p-2 sm:p-5">
               
               <div className="w-full h-full bg-slate-50 flex flex-col justify-between text-[9px] sm:text-[11px] space-y-3">
                 <div className="flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-xs border border-slate-200/60">
@@ -172,7 +178,7 @@ export default function LandingPage() {
         </div>
       </header>
 
-      {/* IMPACTO DE NEGOCIO (GRID FIJO 2X2 EN MÓVILES) */}
+      {/* TARJETAS ROI (GRID EFICIENTE EN MÓVILES) */}
       <section className="bg-[#232529] text-white py-12 sm:py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-2 md:grid-cols-4 gap-y-10 gap-x-4 text-center">
           <div>
@@ -194,7 +200,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* MÓDULOS INTEGRADOS (CAMBIA A REJILLA VERTICAL EN MÓVIL) */}
+      {/* MÓDULOS DE CARACTERÍSTICAS RE-BALANCEADOS */}
       <section id="caracteristicas" className="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 scroll-mt-16">
         <div className="text-center max-w-2xl mx-auto mb-16">
           <h3 className="text-2xl sm:text-3xl md:text-4xl font-black text-[#232529]">Módulos potentes integrados</h3>
@@ -202,7 +208,7 @@ export default function LandingPage() {
         </div>
 
         <div className="space-y-16 sm:space-y-24">
-          {/* MÓDULO 1 */}
+          {/* Módulo de Caja */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-center">
             <div className="bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 aspect-video relative shadow-inner flex items-center justify-center">
               <div className="absolute inset-0 bg-gradient-to-br from-black/10 to-black/40 flex items-end p-4 sm:p-6 z-30">
@@ -222,8 +228,8 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* MÓDULO 2 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-center md:flex-row-reverse">
+          {/* Módulo de Suplementos */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-center">
             <div className="bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 aspect-video relative shadow-inner flex items-center justify-center md:order-2">
               <div className="absolute inset-0 bg-gradient-to-br from-black/10 to-black/40 flex items-end p-4 sm:p-6 z-30">
                 <span className="bg-white/90 text-slate-900 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm">Tienda / Cafetería</span>
@@ -244,7 +250,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* DISCIPLINAS (REJILLA RESPONSIVA FLEXIBLE) */}
+      {/* DISCIPLINAS MULTIFORMATO */}
       <section id="disciplinas" className="bg-slate-100 py-20 border-y border-slate-200 scroll-mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-2xl mx-auto mb-12">
@@ -253,7 +259,7 @@ export default function LandingPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
             <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-2xs border border-slate-200/60">
-              <div className="text-base sm:text-lg font-bold text-[#232529] mb-2.5 flex items-center gap-2"><span>传统🏋️‍♂️</span> Gimnasios Tradicionales</div>
+              <div className="text-base sm:text-lg font-bold text-[#232529] mb-2.5 flex items-center gap-2"><span>🏋️‍♂️</span> Gimnasios Tradicionales</div>
               <p className="text-xs text-slate-600 leading-relaxed">Perfecto para cobros mensuales fijos por uso de aparatos libres e integrados. Registro de visitas masivas rápidas desde recepción.</p>
             </div>
             <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-2xs border border-slate-200/60">
@@ -268,7 +274,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* PRECIOS DINÁMICOS RESPONSIVOS */}
+      {/* PLANES SAAS REMOTOS EN TIEMPO REAL */}
       <section id="planes" className="max-w-6xl mx-auto px-4 py-20 scroll-mt-24">
         <h3 className="text-2xl sm:text-3xl font-black text-center mb-3 text-[#232529]">Precios de Licenciamiento</h3>
         <p className="text-center text-slate-500 mb-12 max-w-md mx-auto text-sm">Catálogo oficial en pesos mexicanos. Elige el esquema ideal para tu negocio.</p>
@@ -319,7 +325,7 @@ export default function LandingPage() {
         )}
       </section>
 
-      {/* PREGUNTAS FRECUENTES (RESPONSIVO ARREGLADO) */}
+      {/* BLOQUE DE PREGUNTAS FRECUENTES COHESIVO */}
       <section className="bg-white py-20 border-t border-slate-200">
         <div className="max-w-3xl mx-auto px-4 sm:px-6">
           <h3 className="text-2xl sm:text-3xl font-black text-center text-[#232529] mb-12">Preguntas Frecuentes</h3>
@@ -336,7 +342,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* FOOTER */}
+      {/* PIE DE PÁGINA */}
       <footer className="text-center py-6 text-[10px] sm:text-xs text-slate-400 border-t border-slate-100 bg-white">
         &copy; {new Date().getFullYear()} FITCONTROL. Todos los derechos reservados.
       </footer>
