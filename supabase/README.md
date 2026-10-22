@@ -34,6 +34,23 @@ El escritorio **nunca** consulta tablas directamente. Al cliente solo le entrega
 2. Ejecuta `sql/01_seguridad_y_telemetria.sql`.
 3. Entra al panel web y confirma que ves licencias, clientes y planes.
 
+### 2b. Ediciones Lite / Pro / Vitalicio (`sql/02_ediciones_y_modulos.sql`)
+**Orden obligatorio:** primero el SQL, después volver a desplegar la función (pegar el código nuevo de `index.ts` en `activar-licencia` → Deploy).
+Si despliegas la función antes del SQL, la activación falla con «servidor no disponible» porque busca columnas que aún no existen.
+
+1. Revisa en el script los `update` del final (asignan Lite/Pro/Vitalicio según el nombre del plan) y ejecútalo.
+2. Vuelve a desplegar `activar-licencia`.
+3. En el panel → **Planes** verás qué incluye cada uno; ajústalo ahí cuando quieras.
+4. En cada PC: Configuración → Licencia → **Validar ahora** para recibir el token con su edición (o espera a que valide sola).
+
+| Edición | Módulos | Usuarios | Actualizaciones |
+|---|---|---|---|
+| Lite | Socios, accesos, membresías, caja, reportes | 2 | Mientras pague |
+| Pro | Todo + punto de venta, inventario, roles | Ilimitados | Mientras pague |
+| Vitalicio | Igual que Pro, nunca vence | Ilimitados | 12 meses desde la emisión (botón «Extender actualizaciones 12 meses») |
+
+Cada versión del programa lleva su fecha de compilación: si es posterior al fin del periodo de actualizaciones de una licencia, esa PC no la puede usar (debe quedarse en su versión o renovar actualizaciones).
+
 ### 3. Probar
 Activa una llave en la app de escritorio. En **Emisión de Licencias** deben aparecer la PC, la versión y "Última conexión: hace 1 min".
 

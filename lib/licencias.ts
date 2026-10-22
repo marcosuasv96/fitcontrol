@@ -20,6 +20,18 @@ export const SUFIJO_PRECIO: Record<TipoPlan, string> = {
   permanente: 'pago único',
 };
 
+/** Módulos premium que dependen del plan; el resto va incluido en todas las ediciones. */
+export type ModuloPremium = 'ventas' | 'inventario' | 'roles';
+
+export const MODULOS_PREMIUM: { id: ModuloPremium; nombre: string; descripcion: string }[] = [
+  { id: 'ventas', nombre: 'Punto de venta', descripcion: 'Venta de productos con código de barras y ticket.' },
+  { id: 'inventario', nombre: 'Inventario', descripcion: 'Productos, stock, entradas, salidas y kardex.' },
+  { id: 'roles', nombre: 'Roles y permisos', descripcion: 'Roles personalizados con permisos por módulo.' },
+];
+
+/** Lo que incluyen TODAS las ediciones (se muestra en la página pública). */
+export const MODULOS_BASE = ['Socios y membresías', 'Control de acceso', 'Credenciales', 'Caja por turnos', 'Reportes'];
+
 export interface Plan {
   id: number;
   nombre: string;
@@ -27,6 +39,16 @@ export interface Plan {
   precio: number;
   tipo_plan: TipoPlan;
   esta_disponible: boolean;
+  modulos: ModuloPremium[];
+  max_usuarios: number | null;          // null = ilimitados
+  meses_actualizaciones: number | null; // null = mientras la licencia esté vigente
+  incluye_soporte: boolean;
+}
+
+export function textoActualizaciones(p: Pick<Plan, 'meses_actualizaciones'>) {
+  if (p.meses_actualizaciones == null) return 'Actualizaciones mientras esté vigente';
+  if (p.meses_actualizaciones === 0) return 'Sin actualizaciones';
+  return `${p.meses_actualizaciones} meses de actualizaciones`;
 }
 
 export interface Cliente {
@@ -50,8 +72,21 @@ export interface Licencia {
   ultima_validacion: string | null;
   version_app: string | null;
   equipo_nombre: string | null;
+  actualizaciones_hasta: string | null;
   clientes: { nombre_empresa: string; telefono: string | null } | null;
-  planes: { nombre: string; tipo_plan: TipoPlan; precio: number } | null;
+  planes: { nombre: string; tipo_plan: TipoPlan; precio: number; meses_actualizaciones: number | null } | null;
+}
+
+/** Igual que la Edge Function: fecha manual > meses desde la emisión > vigencia de la licencia. */
+export function actualizacionesHasta(l: Pick<Licencia, 'actualizaciones_hasta' | 'fecha_emision' | 'fecha_expiracion' | 'planes'>) {
+  if (l.actualizaciones_hasta) return new Date(l.actualizaciones_hasta);
+  const meses = l.planes?.meses_actualizaciones;
+  if (meses != null) {
+    const f = new Date(l.fecha_emision);
+    f.setMonth(f.getMonth() + meses);
+    return f;
+  }
+  return new Date(l.fecha_expiracion);
 }
 
 /** Fecha de término según el tipo de plan, contando a partir de "desde". */
