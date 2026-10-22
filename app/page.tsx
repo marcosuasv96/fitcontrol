@@ -4,7 +4,7 @@ import { useState, useEffect, type ComponentType } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { type Plan, NOMBRES_TIPO_PLAN, SUFIJO_PRECIO, formatoDinero } from '@/lib/licencias';
+import { type Plan, NOMBRES_TIPO_PLAN, SUFIJO_PRECIO, MODULOS_BASE, MODULOS_PREMIUM, formatoDinero, textoActualizaciones } from '@/lib/licencias';
 import { clasesBoton, cx } from '@/components/ui';
 import {
   IconoUsuarios, IconoCredencial, IconoCaja, IconoCarrito, IconoGrafica, IconoEscudo, IconoWifiOff, IconoComputadora,
@@ -232,9 +232,26 @@ export default function LandingPage() {
                       <span className="text-4xl font-bold tracking-tight tabular-nums">{formatoDinero(Number(plan.precio))}</span>
                       <span className={cx('text-sm', top ? 'text-slate-400' : 'text-slate-500')}>{SUFIJO_PRECIO[plan.tipo_plan]}</span>
                     </p>
-                    <p className={cx('mt-5 text-sm leading-relaxed flex-1', top ? 'text-slate-300' : 'text-slate-600')}>
-                      {plan.descripcion || 'Incluye todos los módulos: socios, accesos, caja, punto de venta, inventario y reportes.'}
-                    </p>
+                    {plan.descripcion && (
+                      <p className={cx('mt-5 text-sm leading-relaxed', top ? 'text-slate-300' : 'text-slate-600')}>{plan.descripcion}</p>
+                    )}
+                    {/* Lo que incluye: sale de la configuración del plan en el panel (mismo dato que firma la licencia) */}
+                    <ul className="mt-5 space-y-2 text-sm flex-1">
+                      {[
+                        ...MODULOS_BASE.map((nombre) => ({ nombre, incluido: true })),
+                        // Sin la columna (antes de ejecutar 02_ediciones_y_modulos.sql) no se tacha nada
+                        ...MODULOS_PREMIUM.map((m) => ({ nombre: m.nombre, incluido: plan.modulos === undefined || plan.modulos.includes(m.id) })),
+                        { nombre: plan.max_usuarios ? `Hasta ${plan.max_usuarios} usuarios` : 'Usuarios ilimitados', incluido: true },
+                        { nombre: textoActualizaciones(plan) + (plan.incluye_soporte ? ' y soporte' : ''), incluido: plan.meses_actualizaciones !== 0 },
+                      ].map((f) => (
+                        <li key={f.nombre} className={cx('flex items-start gap-2', !f.incluido && 'opacity-45 line-through')}>
+                          {f.incluido
+                            ? <IconoCheck className={cx('w-4 h-4 mt-0.5 shrink-0', top ? 'text-marca-500' : 'text-emerald-600')} />
+                            : <IconoCerrar className="w-4 h-4 mt-0.5 shrink-0" />}
+                          <span className={top ? 'text-slate-200' : 'text-slate-700'}>{f.nombre}</span>
+                        </li>
+                      ))}
+                    </ul>
                     <a
                       href={enlaceWA(`Hola, me interesa el plan "${plan.nombre}" de FitControl para mi centro de entrenamiento.`)}
                       target="_blank"

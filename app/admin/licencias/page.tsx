@@ -6,7 +6,7 @@ import { useSesion } from '@/lib/sesion';
 import { useAvisos } from '@/components/avisos';
 import {
   type Licencia, type Plan, type EstadoLicencia, calcularExpiracion, diasRestantes, estadoDe, PRESENTACION_ESTADO,
-  NOMBRES_TIPO_PLAN, formatoFecha, formatoDinero, aInputFecha, haceCuanto, generarSerial, enlaceWhatsApp, mensajeEntregaLicencia,
+  NOMBRES_TIPO_PLAN, formatoFecha, formatoDinero, aInputFecha, haceCuanto, generarSerial, enlaceWhatsApp, mensajeEntregaLicencia, actualizacionesHasta,
 } from '@/lib/licencias';
 import {
   Boton, BotonIcono, Tarjeta, Insignia, EncabezadoPagina, EstadoVacio, Esqueleto, Modal, Campo, Entrada, Selector, Interruptor, Alerta, clasesBoton, cx,
@@ -57,7 +57,7 @@ export default function LicenciasPage() {
 
   const cargar = useCallback(async () => {
     const [lic, cli, pln] = await Promise.all([
-      supabase.from('licencias').select('*, clientes(nombre_empresa, telefono), planes(nombre, tipo_plan, precio)').order('fecha_emision', { ascending: false }),
+      supabase.from('licencias').select('*, clientes(nombre_empresa, telefono), planes(nombre, tipo_plan, precio, meses_actualizaciones)').order('fecha_emision', { ascending: false }),
       supabase.from('clientes').select('id, nombre_empresa, telefono').order('nombre_empresa'),
       supabase.from('planes').select('*').order('precio'),
     ]);
@@ -137,6 +137,19 @@ export default function LicenciasPage() {
       textoConfirmar: 'Renovar',
     });
     if (ok) await actualizar(l.id, { fecha_expiracion: nueva.toISOString(), esta_activa: true }, `Renovada hasta ${formatoFecha(nueva.toISOString())}`);
+  };
+
+  // Vitalicio: suma 12 meses de actualizaciones a partir de hoy o del fin del periodo actual (lo que sea mayor)
+  const extenderActualizaciones = async (l: Licencia) => {
+    const actual = actualizacionesHasta(l);
+    const nueva = new Date(actual > new Date() ? actual : new Date());
+    nueva.setMonth(nueva.getMonth() + 12);
+    const ok = await confirmar({
+      titulo: 'Extender actualizaciones',
+      mensaje: `${l.clientes?.nombre_empresa ?? 'El cliente'} podrá instalar versiones nuevas de FitControl publicadas hasta el ${formatoFecha(nueva.toISOString())}.\n\nSu licencia sigue siendo permanente.`,
+      textoConfirmar: 'Extender 12 meses',
+    });
+    if (ok) await actualizar(l.id, { actualizaciones_hasta: nueva.toISOString() }, `Actualizaciones hasta ${formatoFecha(nueva.toISOString())}`);
   };
 
   const liberar = async (l: Licencia) => {
@@ -304,6 +317,7 @@ export default function LicenciasPage() {
         puedeEditar={puedeEditar}
         puedeBorrar={puedeBorrar}
         onRenovar={renovar}
+        onExtenderActualizaciones={extenderActualizaciones}
         onAlternar={alternarEstado}
         onLiberar={liberar}
         onEditar={(l) => setFormulario({ modo: 'editar', licencia: l })}
@@ -365,12 +379,17 @@ function ClaveCopiable({ clave, grande }: { clave: string; grande?: boolean }) {
 
 // ==================================================================== Detalle
 
-function PanelDetalle({ licencia: l, onCerrar, puedeEditar, puedeBorrar, onRenovar, onAlternar, onLiberar, onEditar, onEliminar }: {
+function esPermanente(l: Licencia) {
+  return l.planes?.tipo_plan === 'permanente';
+}
+
+function PanelDetalle({ licencia: l, onCerrar, puedeEditar, puedeBorrar, onRenovar, onExtenderActualizaciones, onAlternar, onLiberar, onEditar, onEliminar }: {
   licencia: Licencia | null;
   onCerrar: () => void;
   puedeEditar: boolean;
   puedeBorrar: boolean;
   onRenovar: (l: Licencia) => void;
+  onExtenderActualizaciones: (l: Licencia) => void;
   onAlternar: (l: Licencia) => void;
   onLiberar: (l: Licencia) => void;
   onEditar: (l: Licencia) => void;
@@ -411,6 +430,9 @@ function PanelDetalle({ licencia: l, onCerrar, puedeEditar, puedeBorrar, onRenov
           <Dato titulo="Última conexión">{haceCuanto(l.ultima_validacion) ?? '—'}</Dato>
           <Dato titulo="Versión del programa">{l.version_app ? `v${l.version_app}` : '—'}</Dato>
           <Dato titulo="Precio del plan">{l.planes ? formatoDinero(Number(l.planes.precio)) : '—'}</Dato>
+          <Dato titulo="Actualizaciones hasta">{esPermanente(l) || l.actualizaciones_hasta
+            ? formatoFecha(actualizacionesHasta(l).toISOString())
+            : 'Mientras esté vigente'}</Dato>
           {l.hardware_id && (
             <div className="col-span-2">
               <dt className="text-xs text-slate-500">Identificador del equipo</dt>
@@ -421,9 +443,16 @@ function PanelDetalle({ licencia: l, onCerrar, puedeEditar, puedeBorrar, onRenov
 
         {puedeEditar && (
           <div className="grid grid-cols-2 gap-2">
-            <Boton variante="primario" icono={<IconoRenovar className="w-4 h-4" />} onClick={() => onRenovar(l)} className="col-span-2">
-              Renovar un periodo
-            </Boton>
+            {esPermanente(l) ? (
+              // Vitalicio: la licencia no vence; lo que se vende es otro año de actualizaciones
+              <Boton variante="primario" icono={<IconoRenovar className="w-4 h-4" />} onClick={() => onExtenderActualizaciones(l)} className="col-span-2">
+                Extender actualizaciones 12 meses
+              </Boton>
+            ) : (
+              <Boton variante="primario" icono={<IconoRenovar className="w-4 h-4" />} onClick={() => onRenovar(l)} className="col-span-2">
+                Renovar un periodo
+              </Boton>
+            )}
             <Boton variante="secundario" icono={<IconoLapiz className="w-4 h-4" />} onClick={() => onEditar(l)}>Editar</Boton>
             <Boton variante="secundario" onClick={() => onAlternar(l)}>{l.esta_activa ? 'Suspender' : 'Reactivar'}</Boton>
             {l.hardware_id && (

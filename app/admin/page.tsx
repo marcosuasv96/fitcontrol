@@ -41,7 +41,7 @@ export default function ResumenPage() {
     async function cargar() {
       const [cli, lic, evt] = await Promise.all([
         supabase.from('clientes').select('id', { count: 'exact', head: true }),
-        supabase.from('licencias').select('*, clientes(nombre_empresa, telefono), planes(nombre, tipo_plan, precio)'),
+        supabase.from('licencias').select('*, clientes(nombre_empresa, telefono), planes(nombre, tipo_plan, precio, meses_actualizaciones)'),
         supabase.from('licencia_eventos').select('id, resultado, equipo, creado_en, clave').order('creado_en', { ascending: false }).limit(8),
       ]);
       setTotalClientes(cli.count ?? 0);

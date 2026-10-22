@@ -11,7 +11,8 @@
 // Despliegue:  supabase functions deploy activar-licencia --no-verify-jwt
 // (o desde el Dashboard con "Verify JWT" desactivado)
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+// jsr: es el registro que Supabase recomienda para Edge Functions (esm.sh puede fallar al arrancar)
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -68,7 +69,7 @@ Deno.serve(async (req) => {
 
   const { data: lic, error } = await supabase
     .from("licencias")
-    .select("id, clave_licencia, esta_activa, fecha_emision, fecha_expiracion, hardware_id, cliente_id, plan_id")
+    .select("id, clave_licencia, esta_activa, fecha_emision, fecha_expiracion, hardware_id, cliente_id, plan_id, actualizaciones_hasta")
     .eq("clave_licencia", clave)
     .maybeSingle();
 
@@ -111,14 +112,38 @@ Deno.serve(async (req) => {
     const { data } = await supabase.from("clientes").select("nombre_empresa").eq("id", lic.cliente_id).maybeSingle();
     cliente = data?.nombre_empresa ?? "";
   }
+  // Edición del plan: módulos premium, límite de usuarios, actualizaciones y soporte
   let plan = "";
+  let modulos: string[] = [];
+  let maxUsuarios: number | null = null;
+  let mesesActualizaciones: number | null = null;
+  let incluyeSoporte = false;
   if (lic.plan_id != null) {
-    const { data } = await supabase.from("planes").select("nombre").eq("id", lic.plan_id).maybeSingle();
+    const { data, error: errPlan } = await supabase
+      .from("planes")
+      .select("nombre, modulos, max_usuarios, meses_actualizaciones, incluye_soporte")
+      .eq("id", lic.plan_id)
+      .maybeSingle();
+    // Si falla (p. ej. falta ejecutar 02_ediciones_y_modulos.sql) mejor no firmar que degradar al cliente
+    if (errPlan) return responder({ status: "ERROR_CONEXION_NUBE" }, 500);
     plan = data?.nombre ?? "";
+    modulos = Array.isArray(data?.modulos) ? data.modulos : [];
+    maxUsuarios = data?.max_usuarios ?? null;
+    mesesActualizaciones = data?.meses_actualizaciones ?? null;
+    incluyeSoporte = data?.incluye_soporte ?? false;
+  }
+
+  // Hasta cuándo recibe versiones nuevas: fecha manual de la licencia > meses desde la emisión > vigencia
+  let actualizacionesHasta = expiracion;
+  if (lic.actualizaciones_hasta) {
+    actualizacionesHasta = new Date(lic.actualizaciones_hasta);
+  } else if (mesesActualizaciones != null) {
+    actualizacionesHasta = new Date(lic.fecha_emision ?? ahora);
+    actualizacionesHasta.setMonth(actualizacionesHasta.getMonth() + mesesActualizaciones);
   }
 
   const token = await firmar({
-    v: 2,
+    v: 3,
     lic: clave,
     hwid,
     iat: Math.floor(ahora.getTime() / 1000),        // hora del servidor (piso anti-retroceso de reloj)
@@ -126,6 +151,10 @@ Deno.serve(async (req) => {
     off: OFFLINE_DAYS,
     cli: cliente,
     plan,
+    mod: modulos,                                     // módulos premium habilitados
+    usr: maxUsuarios ?? 0,                            // 0 = usuarios ilimitados
+    upd: Math.floor(actualizacionesHasta.getTime() / 1000),
+    sop: incluyeSoporte,
   });
 
   await registrar(vincular ? "ACTIVACION" : "VALIDACION");
