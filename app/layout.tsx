@@ -13,18 +13,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'FitControl - Gestión Fitness',
-  description: 'El software definitivo para automatizar tu centro fitness',
+  title: {
+    default: 'FitControl | Software para centros de entrenamiento',
+    template: '%s | FitControl',
+  },
+  description: 'Software de escritorio para gimnasios, boxes, estudios, academias y cualquier centro de entrenamiento: socios, accesos, caja, punto de venta e inventario. Funciona sin internet.',
   icons: {
-    icon: '/logo.ico', 
+    icon: '/logo.ico',
   },
 };
 
-// Fuerza al navegador del celular a respetar las dimensiones reales del dispositivo
+// Sin maximumScale: bloquear el zoom impide leer a personas con baja visión
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  themeColor: "#232529",
 };
 
 export default function RootLayout({
@@ -33,8 +36,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-      <body className="bg-slate-50 text-slate-900 min-h-screen font-sans selection:bg-orange-500 selection:text-white">
+    <html lang="es" data-scroll-behavior="smooth" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className="bg-slate-50 text-slate-900 min-h-screen font-sans selection:bg-marca-500 selection:text-white">
         {children}
       </body>
     </html>

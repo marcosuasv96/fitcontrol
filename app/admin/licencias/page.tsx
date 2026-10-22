@@ -1,559 +1,649 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase'; // Instancia única centralizada
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useSesion } from '@/lib/sesion';
+import { useAvisos } from '@/components/avisos';
+import {
+  type Licencia, type Plan, type EstadoLicencia, calcularExpiracion, diasRestantes, estadoDe, PRESENTACION_ESTADO,
+  NOMBRES_TIPO_PLAN, formatoFecha, formatoDinero, aInputFecha, haceCuanto, generarSerial, enlaceWhatsApp, mensajeEntregaLicencia,
+} from '@/lib/licencias';
+import {
+  Boton, BotonIcono, Tarjeta, Insignia, EncabezadoPagina, EstadoVacio, Esqueleto, Modal, Campo, Entrada, Selector, Interruptor, Alerta, clasesBoton, cx,
+} from '@/components/ui';
+import {
+  IconoMas, IconoBuscar, IconoCopiar, IconoCheck, IconoRenovar, IconoCandadoAbierto, IconoLapiz, IconoBasura, IconoLlave,
+  IconoComputadora, IconoWhatsApp, IconoChevron, IconoRenovar as IconoRegenerar,
+} from '@/components/iconos';
 
-interface Cliente {
-  id: number;
-  nombre_empresa: string;
-}
+interface ClienteOpcion { id: number; nombre_empresa: string; telefono: string | null }
+interface Evento { id: number; resultado: string; equipo: string | null; version_app: string | null; creado_en: string }
 
-type TipoPlan = 'mensual' | 'trimestral' | 'semestral' | 'anual' | 'permanente';
+type Filtro = 'todas' | 'atencion' | EstadoLicencia;
 
-interface Plan {
-  id: number;
-  nombre: string;
-  tipo_plan: TipoPlan;
-}
+const FILTROS: { id: Filtro; texto: string }[] = [
+  { id: 'todas', texto: 'Todas' },
+  { id: 'atencion', texto: 'Requieren atención' },
+  { id: 'activa', texto: 'Activas' },
+  { id: 'sin_equipo', texto: 'Sin activar' },
+  { id: 'por_vencer', texto: 'Por vencer' },
+  { id: 'vencida', texto: 'Vencidas' },
+  { id: 'bloqueada', texto: 'Suspendidas' },
+];
 
-interface Licencia {
-  id: number;
-  clave_licencia: string;
-  fecha_emision: string;
-  fecha_expiracion: string;
-  esta_activa: boolean;
-  hardware_id: string | null;
-  cliente_id: number;
-  plan_id: number;
-  ultima_validacion: string | null;
-  version_app: string | null;
-  equipo_nombre: string | null;
-  clientes: { nombre_empresa: string } | null;
-  planes: { nombre: string; tipo_plan: TipoPlan } | null;
-}
-
-// Fecha de término según el tipo de plan, contando a partir de "desde"
-function calcularExpiracion(tipo: TipoPlan, desde: Date): Date {
-  const f = new Date(desde);
-  switch (tipo) {
-    case 'mensual': f.setMonth(f.getMonth() + 1); break;
-    case 'trimestral': f.setMonth(f.getMonth() + 3); break;
-    case 'semestral': f.setMonth(f.getMonth() + 6); break;
-    case 'anual': f.setFullYear(f.getFullYear() + 1); break;
-    case 'permanente': f.setFullYear(2099, 11, 31); break;
-  }
-  return f;
-}
-
-const formatoFecha = (iso: string) =>
-  new Date(iso).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
-
-// yyyy-mm-dd para <input type="date">
-const aInputFecha = (iso: string) => new Date(iso).toISOString().slice(0, 10);
-
-function estadoLicencia(lic: Licencia) {
-  if (!lic.esta_activa) return { texto: 'Bloqueada', clase: 'text-slate-500 bg-slate-100 border-slate-200' };
-  const dias = Math.ceil((new Date(lic.fecha_expiracion).getTime() - Date.now()) / 86_400_000);
-  if (dias < 0) return { texto: 'Vencida', clase: 'text-rose-600 bg-rose-50 border-rose-200' };
-  if (dias <= 15) return { texto: `Vence en ${dias} d`, clase: 'text-amber-600 bg-amber-50 border-amber-200' };
-  return { texto: 'Activa', clase: 'text-emerald-600 bg-emerald-50 border-emerald-200' };
-}
-
-function haceCuanto(iso: string | null) {
-  if (!iso) return null;
-  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
-  if (min < 60) return `hace ${Math.max(min, 1)} min`;
-  const horas = Math.floor(min / 60);
-  if (horas < 48) return `hace ${horas} h`;
-  return `hace ${Math.floor(horas / 24)} días`;
-}
+const TEXTO_EVENTO: Record<string, string> = {
+  ACTIVACION: 'Activación en equipo',
+  VALIDACION: 'Validación correcta',
+  HARDWARE_DISTINTO: 'Rechazada: otra PC',
+  LICENCIA_VENCIDA: 'Rechazada: vencida',
+  LICENCIA_BLOQUEADA: 'Rechazada: suspendida',
+};
 
 export default function LicenciasPage() {
-  // Sin rol hasta confirmarlo con Supabase (antes arrancaba como super_admin)
-  const [userRole, setUserRole] = useState<string>('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [licenciaEnEdicion, setLicenciaEnEdicion] = useState<Licencia | null>(null);
+  const { puedeEditar, puedeBorrar } = useSesion();
+  const { avisar, confirmar } = useAvisos();
 
   const [licencias, setLicencias] = useState<Licencia[]>([]);
-  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [clientes, setClientes] = useState<ClienteOpcion[]>([]);
   const [planes, setPlanes] = useState<Plan[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [cargando, setCargando] = useState(true);
+
   const [busqueda, setBusqueda] = useState('');
-  const [copiada, setCopiada] = useState<number | null>(null);
+  const [filtro, setFiltro] = useState<Filtro>('todas');
 
-  // Estados del Formulario
-  const [clienteId, setClienteId] = useState('');
-  const [planId, setPlanId] = useState('');
-  const [claveLicencia, setClaveLicencia] = useState('');
-  const [estaActiva, setEstaActiva] = useState(true);
-  const [hardwareId, setHardwareId] = useState('');
-  const [fechaExpiracion, setFechaExpiracion] = useState('');
+  const [detalleId, setDetalleId] = useState<number | null>(null);
+  const [formulario, setFormulario] = useState<{ modo: 'nueva' | 'editar'; licencia?: Licencia; clienteId?: string } | null>(null);
+  const [recienCreada, setRecienCreada] = useState<Licencia | null>(null);
 
-  const fetchData = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: perfil } = await supabase
-        .from('perfiles')
-        .select('rol')
-        .eq('id', user.id)
-        .maybeSingle();
+  const cargar = useCallback(async () => {
+    const [lic, cli, pln] = await Promise.all([
+      supabase.from('licencias').select('*, clientes(nombre_empresa, telefono), planes(nombre, tipo_plan, precio)').order('fecha_emision', { ascending: false }),
+      supabase.from('clientes').select('id, nombre_empresa, telefono').order('nombre_empresa'),
+      supabase.from('planes').select('*').order('precio'),
+    ]);
+    if (lic.error) avisar(`No se pudieron leer las licencias: ${lic.error.message}`, 'error');
+    setLicencias((lic.data as Licencia[]) ?? []);
+    setClientes(cli.data ?? []);
+    setPlanes((pln.data as Plan[]) ?? []);
+    setCargando(false);
+    return (lic.data as Licencia[]) ?? [];
+  }, [avisar]);
 
-      if (perfil && perfil.rol) {
-        setUserRole(perfil.rol.toLowerCase());
-      }
-    }
-
-    const { data: lic, error: errLic } = await supabase
-      .from('licencias')
-      .select('*, clientes(nombre_empresa), planes(nombre, tipo_plan)')
-      .order('fecha_emision', { ascending: false });
-    if (errLic) console.error('No se pudieron leer las licencias:', errLic.message);
-
-    const { data: cli } = await supabase.from('clientes').select('id, nombre_empresa').order('nombre_empresa', { ascending: true });
-    const { data: pln } = await supabase.from('planes').select('id, nombre, tipo_plan').eq('esta_disponible', true);
-
-    if (lic) setLicencias(lic as Licencia[]);
-    if (cli) setClientes(cli);
-    if (pln) setPlanes(pln as Plan[]);
-  };
-
+  // Accesos directos desde otras pantallas: ?nueva=1, ?cliente=ID, ?buscar=CLAVE, ?filtro=atencion
   useEffect(() => {
-    fetchData();
-  }, []);
+    // Carga inicial + lectura única de la URL al montar (no hay datos que sincronizar después)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargar();
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('buscar')) setBusqueda(p.get('buscar')!);
+    if (p.get('filtro')) setFiltro(p.get('filtro') as Filtro);
+    if (p.get('nueva') || p.get('cliente')) setFormulario({ modo: 'nueva', clienteId: p.get('cliente') ?? '' });
+    if ([...p.keys()].length) window.history.replaceState(null, '', '/admin/licencias');
+  }, [cargar]);
 
-  // Solo controla qué botones se ven; Supabase (RLS) es quien realmente permite o niega
-  const puedeCrearYEditar = ['super_admin', 'admin', 'manager'].includes(userRole);
-  const puedeBorrar = ['super_admin', 'admin'].includes(userRole);
+  const conteos = useMemo(() => {
+    const c: Record<string, number> = { todas: licencias.length, atencion: 0 };
+    licencias.forEach((l) => {
+      const e = estadoDe(l);
+      c[e] = (c[e] ?? 0) + 1;
+      if (e === 'vencida' || e === 'por_vencer') c.atencion += 1;
+    });
+    return c;
+  }, [licencias]);
 
-  // Serial con generador criptográfico (Math.random es predecible)
-  const generarSerialUnico = () => {
-    const caracteres = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    const gen = (largo: number) => {
-      const bytes = crypto.getRandomValues(new Uint32Array(largo));
-      return Array.from(bytes, (n) => caracteres.charAt(n % caracteres.length)).join('');
-    };
-    setClaveLicencia(`FIT-PRO-${gen(4)}-${gen(4)}-${gen(4)}`);
+  const visibles = useMemo(() => {
+    const t = busqueda.trim().toLowerCase();
+    return licencias.filter((l) => {
+      const e = estadoDe(l);
+      if (filtro === 'atencion' && e !== 'vencida' && e !== 'por_vencer') return false;
+      if (filtro !== 'todas' && filtro !== 'atencion' && e !== filtro) return false;
+      if (!t) return true;
+      return [l.clave_licencia, l.clientes?.nombre_empresa, l.equipo_nombre, l.planes?.nombre].some((v) => v?.toLowerCase().includes(t));
+    });
+  }, [licencias, busqueda, filtro]);
+
+  const detalle = licencias.find((l) => l.id === detalleId) ?? null;
+
+  // ------------------------------------------------------------ Acciones
+
+  const actualizar = async (id: number, cambios: Record<string, unknown>, exito: string) => {
+    const { error } = await supabase.from('licencias').update(cambios).eq('id', id);
+    if (error) { avisar(`No se pudo guardar: ${error.message}`, 'error'); return false; }
+    avisar(exito);
+    await cargar();
+    return true;
   };
 
-  const abrirModalNueva = () => {
-    setLicenciaEnEdicion(null);
-    generarSerialUnico();
-    setIsModalOpen(true);
-  };
-
-  const abrirModalEdicion = (licencia: Licencia) => {
-    setLicenciaEnEdicion(licencia);
-    setClienteId(licencia.cliente_id.toString());
-    setPlanId(licencia.plan_id.toString());
-    setClaveLicencia(licencia.clave_licencia);
-    setEstaActiva(licencia.esta_activa);
-    setHardwareId(licencia.hardware_id || '');
-    setFechaExpiracion(aInputFecha(licencia.fecha_expiracion));
-    setIsModalOpen(true);
-  };
-
-  const cerrarModal = () => {
-    setIsModalOpen(false);
-    setLicenciaEnEdicion(null);
-    setClienteId('');
-    setPlanId('');
-    setClaveLicencia('');
-    setEstaActiva(true);
-    setHardwareId('');
-    setFechaExpiracion('');
-  };
-
-  const handleGuardarLicencia = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!clienteId || !planId || !puedeCrearYEditar) return;
-    setLoading(true);
-
-    const planElegido = planes.find(p => p.id === parseInt(planId));
-    if (!planElegido && !licenciaEnEdicion) {
-      setLoading(false);
-      return;
+  const alternarEstado = async (l: Licencia) => {
+    if (l.esta_activa) {
+      const ok = await confirmar({
+        titulo: 'Suspender licencia',
+        mensaje: `${l.clientes?.nombre_empresa ?? 'El cliente'} dejará de poder usar FitControl en su próxima validación (al abrir el programa o en máximo 6 horas).`,
+        textoConfirmar: 'Suspender',
+        peligro: true,
+      });
+      if (!ok) return;
     }
-
-    let errorRes = null;
-
-    if (licenciaEnEdicion) {
-      // Al editar se RESPETA la fecha de término (antes se recalculaba desde hoy y se perdían días)
-      const { error } = await supabase
-        .from('licencias')
-        .update({
-          cliente_id: parseInt(clienteId),
-          plan_id: parseInt(planId),
-          esta_activa: estaActiva,
-          hardware_id: hardwareId.trim() || null,
-          fecha_expiracion: new Date(`${fechaExpiracion}T23:59:59`).toISOString(),
-        })
-        .eq('id', licenciaEnEdicion.id);
-      errorRes = error;
-    } else {
-      const { error } = await supabase
-        .from('licencias')
-        .insert([{
-          cliente_id: parseInt(clienteId),
-          plan_id: parseInt(planId),
-          clave_licencia: claveLicencia,
-          fecha_expiracion: calcularExpiracion(planElegido!.tipo_plan, new Date()).toISOString(),
-          esta_activa: estaActiva,
-          hardware_id: null,
-        }]);
-      errorRes = error;
-    }
-
-    if (!errorRes) {
-      cerrarModal();
-      fetchData();
-    } else {
-      alert(`Error en operación: ${errorRes.message}`);
-    }
-    setLoading(false);
+    await actualizar(l.id, { esta_activa: !l.esta_activa }, l.esta_activa ? 'Licencia suspendida' : 'Licencia reactivada');
   };
 
-  const toggleLicencia = async (id: number, estatusActual: boolean) => {
-    if (!puedeCrearYEditar) return;
-    const { error } = await supabase.from('licencias').update({ esta_activa: !estatusActual }).eq('id', id);
-    if (error) alert(`No se pudo cambiar el estado: ${error.message}`);
-    fetchData();
+  const renovar = async (l: Licencia) => {
+    if (!l.planes) return;
+    const actual = new Date(l.fecha_expiracion);
+    const nueva = calcularExpiracion(l.planes.tipo_plan, actual > new Date() ? actual : new Date());
+    const ok = await confirmar({
+      titulo: 'Renovar licencia',
+      mensaje: `Se sumará un periodo ${NOMBRES_TIPO_PLAN[l.planes.tipo_plan].toLowerCase()} (${formatoDinero(Number(l.planes.precio))}).\n\nNuevo término: ${formatoFecha(nueva.toISOString())}\n\nLa PC del cliente tomará la nueva fecha en su próxima validación.`,
+      textoConfirmar: 'Renovar',
+    });
+    if (ok) await actualizar(l.id, { fecha_expiracion: nueva.toISOString(), esta_activa: true }, `Renovada hasta ${formatoFecha(nueva.toISOString())}`);
   };
 
-  // Suma un periodo del plan a partir de la fecha de término actual (o de hoy si ya venció)
-  const renovarLicencia = async (lic: Licencia) => {
-    if (!puedeCrearYEditar || !lic.planes) return;
-    const actual = new Date(lic.fecha_expiracion);
-    const base = actual > new Date() ? actual : new Date();
-    const nueva = calcularExpiracion(lic.planes.tipo_plan, base);
-    const ok = confirm(`¿Renovar la licencia de ${lic.clientes?.nombre_empresa ?? 'este cliente'}?\n\nNuevo término: ${formatoFecha(nueva.toISOString())}\n\nLa PC del cliente tomará la nueva fecha en su próxima validación en línea (o con "Validar ahora" en Configuración).`);
+  const liberar = async (l: Licencia) => {
+    const ok = await confirmar({
+      titulo: 'Liberar equipo',
+      mensaje: `La PC actual${l.equipo_nombre ? ` (${l.equipo_nombre})` : ''} dejará de validar y la misma llave podrá activarse en otra computadora.\n\nÚsalo cuando el cliente cambie de equipo.`,
+      textoConfirmar: 'Liberar equipo',
+    });
+    if (ok) await actualizar(l.id, { hardware_id: null }, 'Equipo liberado: la llave puede activarse en otra PC');
+  };
+
+  const eliminar = async (l: Licencia) => {
+    const ok = await confirmar({
+      titulo: 'Eliminar licencia',
+      mensaje: `Se borrará la llave ${l.clave_licencia} de forma permanente y el cliente perderá el acceso.\n\nSi solo quieres pausarla, mejor usa «Suspender».`,
+      textoConfirmar: 'Eliminar',
+      peligro: true,
+    });
     if (!ok) return;
-    const { error } = await supabase
-      .from('licencias')
-      .update({ fecha_expiracion: nueva.toISOString(), esta_activa: true })
-      .eq('id', lic.id);
-    if (error) alert(`No se pudo renovar: ${error.message}`);
-    fetchData();
+    const { error } = await supabase.from('licencias').delete().eq('id', l.id);
+    if (error) { avisar(`No se pudo eliminar: ${error.message}`, 'error'); return; }
+    setDetalleId(null);
+    avisar('Licencia eliminada');
+    cargar();
   };
 
-  // Desvincula la PC para que el cliente pueda activar la misma llave en otro equipo
-  const liberarEquipo = async (lic: Licencia) => {
-    if (!puedeCrearYEditar) return;
-    const ok = confirm(`¿Liberar la llave ${lic.clave_licencia}?\n\nLa PC actual${lic.equipo_nombre ? ` (${lic.equipo_nombre})` : ''} dejará de validar en su próxima conexión y la llave podrá activarse en otro equipo.`);
-    if (!ok) return;
-    const { error } = await supabase.from('licencias').update({ hardware_id: null }).eq('id', lic.id);
-    if (error) alert(`No se pudo liberar: ${error.message}`);
-    fetchData();
-  };
-
-  const copiarClave = async (lic: Licencia) => {
-    try {
-      await navigator.clipboard.writeText(lic.clave_licencia);
-      setCopiada(lic.id);
-      setTimeout(() => setCopiada(null), 1500);
-    } catch { /* el navegador no permite portapapeles */ }
-  };
-
-  const handleEliminarLicencia = async (id: number) => {
-    if (!puedeBorrar) return;
-    const conf = confirm('¿Remover esta licencia de software? El gimnasio perderá acceso en Windows en su próxima validación.');
-    if (!conf) return;
-
-    const { error } = await supabase.from('licencias').delete().eq('id', id);
-    if (error) alert(`No se pudo eliminar: ${error.message}`);
-    else fetchData();
-  };
-
-  const termino = busqueda.trim().toLowerCase();
-  const licenciasFiltradas = termino
-    ? licencias.filter(l =>
-        l.clave_licencia.toLowerCase().includes(termino) ||
-        (l.clientes?.nombre_empresa ?? '').toLowerCase().includes(termino) ||
-        (l.equipo_nombre ?? '').toLowerCase().includes(termino))
-    : licencias;
+  // ------------------------------------------------------------ Vista
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto overflow-x-hidden px-1">
+    <div className="space-y-6">
+      <EncabezadoPagina
+        titulo="Licencias"
+        descripcion="Emite llaves, renueva vigencias y controla en qué computadora está activa cada una."
+        acciones={puedeEditar && (
+          <Boton icono={<IconoMas className="w-4 h-4" />} onClick={() => setFormulario({ modo: 'nueva' })} className="w-full sm:w-auto">
+            Emitir licencia
+          </Boton>
+        )}
+      />
 
-      {/* HEADER ADAPTATIVO */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-2xs">
-        <div className="space-y-1">
-          <h2 className="text-xl sm:text-2xl font-black text-[#232529] tracking-tight">Emisión de Licencias</h2>
-          <p className="text-slate-400 text-[11px] sm:text-xs font-medium leading-relaxed">Llaves de activación firmadas, vinculación de equipos y última conexión de cada PC.</p>
+      <Tarjeta className="overflow-hidden">
+        {/* Buscador + filtros */}
+        <div className="p-4 sm:p-5 space-y-4 border-b border-slate-100">
+          <div className="relative">
+            <IconoBuscar className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <Entrada
+              type="search"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por cliente, llave, equipo o plan"
+              className="pl-11"
+              aria-label="Buscar licencias"
+            />
+          </div>
+          <div className="flex gap-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap pb-1 sm:pb-0" role="tablist" aria-label="Filtrar por estado">
+            {FILTROS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                role="tab"
+                aria-selected={filtro === f.id}
+                onClick={() => setFiltro(f.id)}
+                className={cx(
+                  'shrink-0 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm font-medium border transition',
+                  filtro === f.id ? 'bg-tinta-900 text-white border-tinta-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+                )}
+              >
+                {f.texto}
+                <span className={cx('text-xs tabular-nums', filtro === f.id ? 'text-white/70' : 'text-slate-400')}>{conteos[f.id] ?? 0}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
-        {puedeCrearYEditar ? (
-          <button
-            onClick={abrirModalNueva}
-            className="w-full sm:w-auto bg-[#F47521] hover:bg-[#d65f13] text-white font-bold px-5 py-3 rounded-xl transition text-xs uppercase tracking-wider shadow-lg shadow-orange-500/10 flex items-center justify-center gap-2 shrink-0"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" /></svg>
-            Emitir Licencia
-          </button>
+        {cargando ? (
+          <div className="p-5 space-y-3">{[0, 1, 2, 3].map((i) => <Esqueleto key={i} className="h-16" />)}</div>
+        ) : visibles.length === 0 ? (
+          <EstadoVacio
+            icono={<IconoLlave />}
+            titulo={licencias.length === 0 ? 'Aún no hay licencias' : 'Sin resultados'}
+            descripcion={licencias.length === 0 ? 'Emite la primera llave para que tu cliente active FitControl.' : 'Prueba con otra búsqueda o cambia el filtro.'}
+            accion={licencias.length === 0 && puedeEditar && (
+              <Boton icono={<IconoMas className="w-4 h-4" />} onClick={() => setFormulario({ modo: 'nueva' })}>Emitir licencia</Boton>
+            )}
+          />
         ) : (
-          <div className="w-full sm:w-auto bg-slate-100 border border-slate-200 rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 text-slate-400 text-xs font-semibold shrink-0">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
-            Consola Protegida (Lectura)
+          <>
+            {/* Tabla: tabletas grandes y escritorio */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs font-medium text-slate-500 bg-slate-50/70">
+                    <th className="px-5 py-3 font-medium">Cliente</th>
+                    <th className="px-5 py-3 font-medium">Llave</th>
+                    <th className="px-5 py-3 font-medium">Equipo</th>
+                    <th className="px-5 py-3 font-medium">Vigencia</th>
+                    <th className="px-5 py-3 font-medium">Estado</th>
+                    <th className="px-5 py-3"><span className="sr-only">Ver</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {visibles.map((l) => {
+                    const est = PRESENTACION_ESTADO[estadoDe(l)];
+                    return (
+                      <tr key={l.id} onClick={() => setDetalleId(l.id)} className="cursor-pointer hover:bg-slate-50 transition">
+                        <td className="px-5 py-4">
+                          <p className="font-medium text-tinta-900">{l.clientes?.nombre_empresa ?? 'Cliente eliminado'}</p>
+                          <p className="text-xs text-slate-500">{l.planes?.nombre ?? '—'}</p>
+                        </td>
+                        <td className="px-5 py-4"><ClaveCopiable clave={l.clave_licencia} /></td>
+                        <td className="px-5 py-4">
+                          {l.hardware_id ? (
+                            <>
+                              <p className="text-tinta-900 truncate max-w-44">{l.equipo_nombre ?? 'PC vinculada'}</p>
+                              <p className="text-xs text-slate-500">{haceCuanto(l.ultima_validacion) ?? 'sin reporte'}</p>
+                            </>
+                          ) : <span className="text-slate-400">Esperando activación</span>}
+                        </td>
+                        <td className="px-5 py-4 whitespace-nowrap">
+                          <p className="text-tinta-900">{formatoFecha(l.fecha_expiracion)}</p>
+                          <p className="text-xs text-slate-500">{textoDias(l.fecha_expiracion)}</p>
+                        </td>
+                        <td className="px-5 py-4"><Insignia tono={est.tono} punto>{est.texto}</Insignia></td>
+                        <td className="px-5 py-4 text-right"><IconoChevron className="w-4 h-4 text-slate-300 inline" /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Tarjetas: celulares y tabletas chicas */}
+            <ul className="md:hidden divide-y divide-slate-100">
+              {visibles.map((l) => {
+                const est = PRESENTACION_ESTADO[estadoDe(l)];
+                return (
+                  <li key={l.id}>
+                    <button type="button" onClick={() => setDetalleId(l.id)} className="w-full text-left px-4 py-4 active:bg-slate-50">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium text-tinta-900 truncate">{l.clientes?.nombre_empresa ?? 'Cliente eliminado'}</p>
+                          <p className="text-xs text-slate-500">{l.planes?.nombre ?? '—'}</p>
+                        </div>
+                        <Insignia tono={est.tono} punto>{est.texto}</Insignia>
+                      </div>
+                      <p className="mt-2 font-mono text-xs text-slate-600">{l.clave_licencia}</p>
+                      <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                        <span>Vence {formatoFecha(l.fecha_expiracion)}</span>
+                        <span className="truncate pl-2">{l.hardware_id ? (l.equipo_nombre ?? 'PC vinculada') : 'Sin activar'}</span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+      </Tarjeta>
+
+      {/* ------------------------------------------------ Detalle */}
+      <PanelDetalle
+        key={detalleId ?? 'ninguna'}
+        licencia={detalle}
+        onCerrar={() => setDetalleId(null)}
+        puedeEditar={puedeEditar}
+        puedeBorrar={puedeBorrar}
+        onRenovar={renovar}
+        onAlternar={alternarEstado}
+        onLiberar={liberar}
+        onEditar={(l) => setFormulario({ modo: 'editar', licencia: l })}
+        onEliminar={eliminar}
+      />
+
+      {/* ------------------------------------------------ Alta / edición */}
+      {formulario && (
+        <FormularioLicencia
+          key={formulario.licencia?.id ?? 'nueva'}
+          modo={formulario.modo}
+          licencia={formulario.licencia}
+          clienteInicial={formulario.clienteId}
+          clientes={clientes}
+          planes={planes}
+          onCerrar={() => setFormulario(null)}
+          onGuardado={async (id) => {
+            setFormulario(null);
+            const lista = await cargar();
+            if (formulario.modo === 'nueva') setRecienCreada(lista.find((x) => x.id === id) ?? null);
+            else avisar('Cambios guardados');
+          }}
+        />
+      )}
+
+      {/* ------------------------------------------------ Licencia lista para entregar */}
+      <ModalEntrega licencia={recienCreada} onCerrar={() => setRecienCreada(null)} />
+    </div>
+  );
+}
+
+function textoDias(iso: string) {
+  const d = diasRestantes(iso);
+  if (d < 0) return `venció hace ${-d} días`;
+  if (d === 0) return 'vence hoy';
+  if (d > 3650) return 'permanente';
+  return `quedan ${d} días`;
+}
+
+function ClaveCopiable({ clave, grande }: { clave: string; grande?: boolean }) {
+  const [copiada, setCopiada] = useState(false);
+  const copiar = async (e: React.MouseEvent) => {
+    e.stopPropagation(); // no abrir el detalle al copiar desde la tabla
+    try {
+      await navigator.clipboard.writeText(clave);
+      setCopiada(true);
+      setTimeout(() => setCopiada(false), 1500);
+    } catch { /* el navegador no permitió el portapapeles */ }
+  };
+  return (
+    <span className={cx('inline-flex items-center gap-2 rounded-lg bg-slate-100 font-mono font-semibold text-tinta-900', grande ? 'px-3 py-2 text-sm' : 'pl-2.5 pr-1 py-1 text-xs')}>
+      <span className="select-all">{clave}</span>
+      <button type="button" onClick={copiar} aria-label="Copiar llave" title="Copiar llave" className="p-1 rounded-md text-slate-400 hover:text-tinta-900 hover:bg-white transition">
+        {copiada ? <IconoCheck className="w-4 h-4 text-emerald-600" /> : <IconoCopiar className="w-4 h-4" />}
+      </button>
+    </span>
+  );
+}
+
+// ==================================================================== Detalle
+
+function PanelDetalle({ licencia: l, onCerrar, puedeEditar, puedeBorrar, onRenovar, onAlternar, onLiberar, onEditar, onEliminar }: {
+  licencia: Licencia | null;
+  onCerrar: () => void;
+  puedeEditar: boolean;
+  puedeBorrar: boolean;
+  onRenovar: (l: Licencia) => void;
+  onAlternar: (l: Licencia) => void;
+  onLiberar: (l: Licencia) => void;
+  onEditar: (l: Licencia) => void;
+  onEliminar: (l: Licencia) => void;
+}) {
+  const [eventos, setEventos] = useState<Evento[] | null>(null);
+
+  // El panel se monta de nuevo por cada licencia (key), así que el historial arranca vacío
+  const licenciaId = l?.id;
+  useEffect(() => {
+    if (!licenciaId) return;
+    supabase
+      .from('licencia_eventos')
+      .select('id, resultado, equipo, version_app, creado_en')
+      .eq('licencia_id', licenciaId)
+      .order('creado_en', { ascending: false })
+      .limit(10)
+      .then(({ data, error }) => setEventos(error ? [] : (data as Evento[])));
+  }, [licenciaId]);
+
+  if (!l) return <Modal abierto={false} onCerrar={onCerrar} titulo="">{null}</Modal>;
+  const est = PRESENTACION_ESTADO[estadoDe(l)];
+
+  return (
+    <Modal abierto onCerrar={onCerrar} variante="panel" titulo={l.clientes?.nombre_empresa ?? 'Licencia'} descripcion={l.planes?.nombre}>
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <Insignia tono={est.tono} punto>{est.texto}</Insignia>
+          <span className="text-sm text-slate-500">{textoDias(l.fecha_expiracion)}</span>
+        </div>
+
+        <ClaveCopiable clave={l.clave_licencia} grande />
+
+        <dl className="grid grid-cols-2 gap-4 text-sm">
+          <Dato titulo="Emitida">{formatoFecha(l.fecha_emision)}</Dato>
+          <Dato titulo="Vence">{formatoFecha(l.fecha_expiracion)}</Dato>
+          <Dato titulo="Equipo">{l.hardware_id ? (l.equipo_nombre ?? 'PC vinculada') : 'Sin activar'}</Dato>
+          <Dato titulo="Última conexión">{haceCuanto(l.ultima_validacion) ?? '—'}</Dato>
+          <Dato titulo="Versión del programa">{l.version_app ? `v${l.version_app}` : '—'}</Dato>
+          <Dato titulo="Precio del plan">{l.planes ? formatoDinero(Number(l.planes.precio)) : '—'}</Dato>
+          {l.hardware_id && (
+            <div className="col-span-2">
+              <dt className="text-xs text-slate-500">Identificador del equipo</dt>
+              <dd className="mt-0.5 font-mono text-xs text-tinta-900 break-all">{l.hardware_id}</dd>
+            </div>
+          )}
+        </dl>
+
+        {puedeEditar && (
+          <div className="grid grid-cols-2 gap-2">
+            <Boton variante="primario" icono={<IconoRenovar className="w-4 h-4" />} onClick={() => onRenovar(l)} className="col-span-2">
+              Renovar un periodo
+            </Boton>
+            <Boton variante="secundario" icono={<IconoLapiz className="w-4 h-4" />} onClick={() => onEditar(l)}>Editar</Boton>
+            <Boton variante="secundario" onClick={() => onAlternar(l)}>{l.esta_activa ? 'Suspender' : 'Reactivar'}</Boton>
+            {l.hardware_id && (
+              <Boton variante="secundario" icono={<IconoCandadoAbierto className="w-4 h-4" />} onClick={() => onLiberar(l)} className="col-span-2">
+                Liberar equipo (cambio de PC)
+              </Boton>
+            )}
+            <a
+              href={enlaceWhatsApp(l.clientes?.telefono, mensajeEntregaLicencia(l.clientes?.nombre_empresa ?? '', l.clave_licencia, formatoFecha(l.fecha_expiracion)))}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={clasesBoton('secundario', 'md', 'col-span-2 text-emerald-700')}
+            >
+              <IconoWhatsApp className="w-4 h-4" /> Enviar llave por WhatsApp
+            </a>
+          </div>
+        )}
+
+        <div>
+          <h3 className="text-sm font-semibold text-tinta-900 mb-3">Historial de conexiones</h3>
+          {eventos === null ? (
+            <div className="space-y-2"><Esqueleto className="h-10" /><Esqueleto className="h-10" /></div>
+          ) : eventos.length === 0 ? (
+            <p className="text-sm text-slate-500">Sin registros todavía.</p>
+          ) : (
+            <ol className="space-y-3">
+              {eventos.map((e) => (
+                <li key={e.id} className="flex items-start gap-3 text-sm">
+                  <IconoComputadora className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-tinta-900">{TEXTO_EVENTO[e.resultado] ?? e.resultado}</p>
+                    <p className="text-xs text-slate-500 truncate">
+                      {new Date(e.creado_en).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })}
+                      {e.equipo && ` · ${e.equipo}`}{e.version_app && ` · v${e.version_app}`}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+
+        {puedeBorrar && (
+          <div className="pt-4 border-t border-slate-100">
+            <button type="button" onClick={() => onEliminar(l)} className="inline-flex items-center gap-2 text-sm font-medium text-rose-600 hover:text-rose-700">
+              <IconoBasura className="w-4 h-4" /> Eliminar licencia
+            </button>
           </div>
         )}
       </div>
+    </Modal>
+  );
+}
 
-      {/* RECUADRO INFORMATIVO DE BITÁCORA */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden">
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row gap-3 justify-between sm:items-center bg-slate-50/50">
-          <div className="flex items-center gap-3">
-            <h3 className="text-xs font-bold text-[#232529] uppercase tracking-wider font-mono">Llaves de Activación en Producción</h3>
-            <span className="bg-[#232529] text-white text-[9px] font-bold px-2.5 py-1 rounded-md font-mono">
-              {licencias.length} SERIALES
-            </span>
-          </div>
-          <input
-            type="search"
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar cliente, llave o equipo…"
-            className="w-full sm:w-64 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#F47521] transition"
-          />
-        </div>
-
-        {/* Contenedor Fluido con Scroll Deslizante Antidesbordes */}
-        <div className="w-full overflow-x-auto selection:bg-transparent">
-          <table className="w-full text-left border-collapse text-xs min-w-[1100px]">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/50 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                <th className="p-4">Establecimiento</th>
-                <th className="p-4">Plan / Modalidad</th>
-                <th className="p-4">Clave del Serial (Windows)</th>
-                <th className="p-4">Equipo Vinculado</th>
-                <th className="p-4">Última Conexión</th>
-                <th className="p-4">Término / Estado</th>
-                {puedeCrearYEditar && <th className="p-4 text-center">Acciones</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {licenciasFiltradas.map((lic) => {
-                const estado = estadoLicencia(lic);
-                return (
-                <tr key={lic.id} className="hover:bg-slate-50/40 transition">
-                  <td className="p-4 font-bold text-[#232529] max-w-[180px] truncate">{lic.clientes?.nombre_empresa || 'Cuenta Removida'}</td>
-                  <td className="p-4">
-                    <div className="text-slate-700 font-bold leading-tight">{lic.planes?.nombre || 'Personalizado'}</div>
-                    <div className="text-[9px] uppercase font-mono font-black text-[#F47521] mt-0.5">{lic.planes?.tipo_plan}</div>
-                  </td>
-
-                  <td className="p-4">
-                    <div className="flex items-center gap-1.5">
-                      <span className="bg-slate-100 border border-slate-200 px-2.5 py-1.5 rounded-xl font-mono text-[10px] sm:text-[11px] font-black text-[#232529] tracking-wider inline-block shadow-3xs select-all">
-                        {lic.clave_licencia}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => copiarClave(lic)}
-                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200 transition bg-white text-[10px] font-bold"
-                        title="Copiar llave para enviarla al cliente"
-                      >
-                        {copiada === lic.id ? '✓' : '⧉'}
-                      </button>
-                    </div>
-                  </td>
-
-                  <td className="p-4">
-                    {lic.hardware_id ? (
-                      <div className="space-y-1 max-w-[170px]">
-                        <div className="font-bold text-slate-700 truncate" title={lic.equipo_nombre ?? ''}>{lic.equipo_nombre || 'PC vinculada'}</div>
-                        <span className="font-mono text-[10px] text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md font-medium select-all block truncate" title={lic.hardware_id}>
-                          {lic.hardware_id}
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-100/60 px-2 py-1 rounded-md inline-block whitespace-nowrap animate-pulse">
-                        ⚠️ Esperando PC
-                      </span>
-                    )}
-                  </td>
-
-                  <td className="p-4 whitespace-nowrap">
-                    {lic.ultima_validacion ? (
-                      <>
-                        <div className="font-bold text-slate-700">{haceCuanto(lic.ultima_validacion)}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{lic.version_app ? `v${lic.version_app}` : ''}</div>
-                      </>
-                    ) : (
-                      <span className="text-slate-300 font-mono">—</span>
-                    )}
-                  </td>
-
-                  <td className="p-4 whitespace-nowrap">
-                    <div className="text-slate-500 font-mono font-bold">{formatoFecha(lic.fecha_expiracion)}</div>
-                    <span className={`mt-1 inline-block text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${estado.clase}`}>
-                      {estado.texto}
-                    </span>
-                  </td>
-
-                  {/* ACCIONES */}
-                  {puedeCrearYEditar && (
-                    <td className="p-4 text-center">
-                      <div className="flex justify-center items-center gap-2">
-
-                        {/* Toggle Switch Deslizante Premium */}
-                        <button
-                          type="button"
-                          onClick={() => toggleLicencia(lic.id, lic.esta_activa)}
-                          className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                            lic.esta_activa ? 'bg-emerald-500' : 'bg-slate-300'
-                          }`}
-                          title={lic.esta_activa ? "Licencia Activa - Pausar terminal" : "Licencia Bloqueada - Autorizar terminal"}
-                        >
-                          <span
-                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                              lic.esta_activa ? 'translate-x-5' : 'translate-x-0'
-                            }`}
-                          />
-                        </button>
-
-                        {/* Renovar un periodo */}
-                        <button
-                          onClick={() => renovarLicencia(lic)}
-                          className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg border border-slate-200 transition bg-white shadow-3xs"
-                          title="Renovar un periodo del plan"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                        </button>
-
-                        {/* Liberar equipo */}
-                        {lic.hardware_id && (
-                          <button
-                            onClick={() => liberarEquipo(lic)}
-                            className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg border border-slate-200 transition bg-white shadow-3xs"
-                            title="Liberar equipo (permitir activar en otra PC)"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 1 1 9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
-                          </button>
-                        )}
-
-                        {/* Modificar */}
-                        <button
-                          onClick={() => abrirModalEdicion(lic)}
-                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200 transition bg-white shadow-3xs"
-                          title="Editar"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
-                        </button>
-
-                        {/* Eliminar */}
-                        {puedeBorrar ? (
-                          <button
-                            onClick={() => handleEliminarLicencia(lic.id)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-200 hover:border-rose-200 transition bg-white shadow-3xs"
-                            title="Remover permanentemente"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                          </button>
-                        ) : (
-                          <span className="text-[9px] font-mono font-bold text-slate-300 select-none px-1">Lock</span>
-                        )}
-
-                      </div>
-                    </td>
-                  )}
-                </tr>
-                );
-              })}
-              {licenciasFiltradas.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-400 font-medium">
-                    {licencias.length === 0 ? 'No hay licencias o tu usuario no tiene permiso para verlas.' : 'Sin coincidencias.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* MODAL RESPONSIVO AJUSTADO CONTRA REBOTE DE TECLADOS MÓVILES */}
-      {isModalOpen && puedeCrearYEditar && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl p-5 sm:p-6 relative max-h-[94vh] overflow-y-auto">
-            <button onClick={cerrarModal} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-lg p-1 transition">✕</button>
-
-            <h3 className="text-xs sm:text-sm font-bold text-[#232529] uppercase tracking-wider border-b border-slate-100 pb-3 mb-4 font-sans flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4 text-[#F47521]"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" /></svg>
-              {licenciaEnEdicion ? 'Modificar Parámetros' : 'Emitir Licencia de Software'}
-            </h3>
-
-            <form onSubmit={handleGuardarLicencia} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Seleccionar Establecimiento</label>
-                <select required value={clienteId} onChange={(e) => setClienteId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-[#F47521] focus:bg-white transition">
-                  <option value="">-- Selecciona un cliente --</option>
-                  {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre_empresa}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Asignar Plan Comercial</label>
-                <select required value={planId} onChange={(e) => setPlanId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-[#F47521] focus:bg-white transition">
-                  <option value="">-- Selecciona un paquete --</option>
-                  {planes.map(p => <option key={p.id} value={p.id}>{p.nombre} ({p.tipo_plan})</option>)}
-                </select>
-                {!licenciaEnEdicion && (
-                  <p className="text-[10px] text-slate-400 mt-1">El término se calcula desde hoy según el tipo de plan.</p>
-                )}
-              </div>
-
-              {licenciaEnEdicion && (
-                <>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Fecha de Término</label>
-                    <input
-                      type="date"
-                      required
-                      value={fechaExpiracion}
-                      onChange={(e) => setFechaExpiracion(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono text-slate-700 focus:outline-none focus:border-[#F47521] focus:bg-white transition"
-                    />
-                    <p className="text-[10px] text-slate-400 mt-1">Cambiar el plan ya no modifica esta fecha. Usa el botón «Renovar» para sumar un periodo.</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Hardware ID (Ligar PC Windows)</label>
-                    <input
-                      type="text"
-                      value={hardwareId}
-                      onChange={(e) => setHardwareId(e.target.value)}
-                      placeholder="Vacío para permitir otra PC"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono text-slate-700 focus:outline-none focus:border-[#F47521] focus:bg-white transition"
-                    />
-                  </div>
-
-                  <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                    <input type="checkbox" checked={estaActiva} onChange={(e) => setEstaActiva(e.target.checked)} className="accent-[#F47521] w-4 h-4" />
-                    Licencia activa
-                  </label>
-                </>
-              )}
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Clave Serial de Activación</label>
-                <div className="flex gap-2">
-                  <input type="text" readOnly value={claveLicencia} className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono font-black text-center text-[#F47521] tracking-wider outline-none shadow-3xs" />
-                  {!licenciaEnEdicion && (
-                    <button type="button" onClick={generarSerialUnico} className="bg-slate-50 hover:bg-slate-100 text-slate-600 px-3.5 rounded-xl border border-slate-200 text-xs font-bold shrink-0 transition" title="Regenerar Token">🔄</button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={cerrarModal} className="w-1/2 bg-slate-100 text-slate-700 font-bold py-2.5 rounded-xl text-[10px] uppercase tracking-wider transition">Cancelar</button>
-                <button disabled={loading || !clienteId || !planId} type="submit" className="w-1/2 bg-[#F47521] hover:bg-[#d65f13] text-white font-bold py-2.5 rounded-xl text-[10px] uppercase tracking-wider shadow-md disabled:opacity-50 transition">
-                  {loading ? 'Procesando...' : 'Confirmar'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
+function Dato({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="text-xs text-slate-500">{titulo}</dt>
+      <dd className="mt-0.5 font-medium text-tinta-900">{children}</dd>
     </div>
+  );
+}
+
+// ==================================================================== Formulario
+
+function FormularioLicencia({ modo, licencia, clienteInicial, clientes, planes, onCerrar, onGuardado }: {
+  modo: 'nueva' | 'editar';
+  licencia?: Licencia;
+  clienteInicial?: string;
+  clientes: ClienteOpcion[];
+  planes: Plan[];
+  onCerrar: () => void;
+  onGuardado: (id: number) => void;
+}) {
+  const esNueva = modo === 'nueva';
+  const [clienteId, setClienteId] = useState(licencia ? String(licencia.cliente_id) : clienteInicial ?? '');
+  const [planId, setPlanId] = useState(licencia ? String(licencia.plan_id) : '');
+  const [clave, setClave] = useState(licencia?.clave_licencia ?? generarSerial());
+  const [fecha, setFecha] = useState(licencia ? aInputFecha(licencia.fecha_expiracion) : '');
+  const [hardwareId, setHardwareId] = useState(licencia?.hardware_id ?? '');
+  const [activa, setActiva] = useState(licencia?.esta_activa ?? true);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+
+  // Al editar se muestran también los planes ocultos (por si la licencia usa uno retirado)
+  const opcionesPlan = esNueva ? planes.filter((p) => p.esta_disponible) : planes;
+  const planElegido = planes.find((p) => p.id === Number(planId));
+  const venceraEl = esNueva && planElegido ? formatoFecha(calcularExpiracion(planElegido.tipo_plan, new Date()).toISOString()) : null;
+
+  const guardar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGuardando(true);
+    setError('');
+
+    const res = esNueva
+      ? await supabase.from('licencias').insert({
+          cliente_id: Number(clienteId),
+          plan_id: Number(planId),
+          clave_licencia: clave,
+          fecha_expiracion: calcularExpiracion(planElegido!.tipo_plan, new Date()).toISOString(),
+          esta_activa: true,
+          hardware_id: null,
+        }).select('id').single()
+      // Al editar se RESPETA la fecha de término: cambiar el plan no la recalcula
+      : await supabase.from('licencias').update({
+          cliente_id: Number(clienteId),
+          plan_id: Number(planId),
+          fecha_expiracion: new Date(`${fecha}T23:59:59`).toISOString(),
+          hardware_id: hardwareId.trim() || null,
+          esta_activa: activa,
+        }).eq('id', licencia!.id).select('id').single();
+
+    setGuardando(false);
+    if (res.error) { setError(res.error.message); return; }
+    onGuardado(res.data.id);
+  };
+
+  return (
+    <Modal
+      abierto
+      onCerrar={onCerrar}
+      titulo={esNueva ? 'Emitir licencia' : 'Editar licencia'}
+      descripcion={esNueva ? 'La vigencia se calcula desde hoy según el plan.' : licencia?.clave_licencia}
+      pie={
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          <Boton variante="secundario" onClick={onCerrar} className="w-full sm:w-auto">Cancelar</Boton>
+          <Boton type="submit" form="form-licencia" cargando={guardando} disabled={!clienteId || !planId} className="w-full sm:w-auto">
+            {esNueva ? 'Emitir licencia' : 'Guardar cambios'}
+          </Boton>
+        </div>
+      }
+    >
+      <form id="form-licencia" onSubmit={guardar} className="space-y-5">
+        {error && <Alerta>{error}</Alerta>}
+
+        <Campo etiqueta="Cliente" ayuda={clientes.length === 0 ? 'Primero registra un cliente en la sección Clientes.' : undefined}>
+          {(id) => (
+            <Selector id={id} required value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
+              <option value="">Selecciona un cliente…</option>
+              {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre_empresa}</option>)}
+            </Selector>
+          )}
+        </Campo>
+
+        <Campo etiqueta="Plan" ayuda={venceraEl ? `Vigente hasta el ${venceraEl}` : undefined}>
+          {(id) => (
+            <Selector id={id} required value={planId} onChange={(e) => setPlanId(e.target.value)}>
+              <option value="">Selecciona un plan…</option>
+              {opcionesPlan.map((p) => (
+                <option key={p.id} value={p.id}>{p.nombre} · {formatoDinero(Number(p.precio))} ({NOMBRES_TIPO_PLAN[p.tipo_plan]})</option>
+              ))}
+            </Selector>
+          )}
+        </Campo>
+
+        {esNueva ? (
+          <Campo etiqueta="Llave de activación" ayuda="Se genera automáticamente; puedes regenerarla antes de emitir.">
+            {(id) => (
+              <div className="flex gap-2">
+                <Entrada id={id} readOnly value={clave} className="font-mono font-semibold text-center tracking-wider bg-slate-50" />
+                <BotonIcono etiqueta="Generar otra llave" onClick={() => setClave(generarSerial())} className="w-11 h-11 shrink-0">
+                  <IconoRegenerar className="w-5 h-5" />
+                </BotonIcono>
+              </div>
+            )}
+          </Campo>
+        ) : (
+          <>
+            <Campo etiqueta="Fecha de término" ayuda="Cambiar el plan no modifica esta fecha. Para sumar un periodo usa «Renovar».">
+              {(id) => <Entrada id={id} type="date" required value={fecha} onChange={(e) => setFecha(e.target.value)} />}
+            </Campo>
+            <Campo etiqueta="Identificador del equipo" ayuda="Déjalo vacío para permitir activar en otra PC.">
+              {(id) => <Entrada id={id} value={hardwareId} onChange={(e) => setHardwareId(e.target.value)} placeholder="Sin equipo vinculado" className="font-mono text-xs" />}
+            </Campo>
+            <div className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-tinta-900">Licencia activa</p>
+                <p className="text-xs text-slate-500">Si la desactivas, el programa se bloquea en su próxima validación.</p>
+              </div>
+              <Interruptor activo={activa} onCambio={() => setActiva(!activa)} etiqueta="Licencia activa" />
+            </div>
+          </>
+        )}
+      </form>
+    </Modal>
+  );
+}
+
+// ==================================================================== Entrega
+
+function ModalEntrega({ licencia: l, onCerrar }: { licencia: Licencia | null; onCerrar: () => void }) {
+  const [copiado, setCopiado] = useState(false);
+  if (!l) return null;
+  const mensaje = mensajeEntregaLicencia(l.clientes?.nombre_empresa ?? '', l.clave_licencia, formatoFecha(l.fecha_expiracion));
+
+  const copiarMensaje = async () => {
+    try { await navigator.clipboard.writeText(mensaje); setCopiado(true); setTimeout(() => setCopiado(false), 1500); } catch { /* sin portapapeles */ }
+  };
+
+  return (
+    <Modal
+      abierto
+      onCerrar={onCerrar}
+      titulo="¡Licencia lista!"
+      descripcion={`Para ${l.clientes?.nombre_empresa ?? 'tu cliente'} · vence el ${formatoFecha(l.fecha_expiracion)}`}
+      pie={<Boton variante="secundario" onClick={onCerrar} className="w-full sm:w-auto sm:ml-auto sm:flex">Listo</Boton>}
+    >
+      <div className="space-y-5">
+        <div className="flex justify-center"><ClaveCopiable clave={l.clave_licencia} grande /></div>
+        <p className="text-sm text-slate-600 text-center">Envía al cliente el instalador y esta llave. La activará la primera vez que abra FitControl.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <a href={enlaceWhatsApp(l.clientes?.telefono, mensaje)} target="_blank" rel="noopener noreferrer" className={clasesBoton('primario', 'md', 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20')}>
+            <IconoWhatsApp className="w-4 h-4" /> Enviar por WhatsApp
+          </a>
+          <Boton variante="secundario" icono={copiado ? <IconoCheck className="w-4 h-4" /> : <IconoCopiar className="w-4 h-4" />} onClick={copiarMensaje}>
+            {copiado ? 'Mensaje copiado' : 'Copiar mensaje'}
+          </Boton>
+        </div>
+        {!l.clientes?.telefono && <p className="text-xs text-slate-500 text-center">Este cliente no tiene teléfono registrado; WhatsApp te pedirá elegir el contacto.</p>}
+      </div>
+    </Modal>
   );
 }

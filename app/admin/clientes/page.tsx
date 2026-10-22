@@ -1,299 +1,223 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useSesion } from '@/lib/sesion';
+import { useAvisos } from '@/components/avisos';
+import { type Cliente, formatoFecha, enlaceWhatsApp } from '@/lib/licencias';
+import { Boton, BotonIcono, Tarjeta, EncabezadoPagina, EstadoVacio, Esqueleto, Modal, Campo, Entrada, Alerta, Insignia, clasesBoton } from '@/components/ui';
+import { IconoMas, IconoBuscar, IconoEdificio, IconoLapiz, IconoBasura, IconoLlave, IconoTelefono, IconoCorreo, IconoWhatsApp } from '@/components/iconos';
 
-interface Cliente {
-  id: number;
-  nombre_empresa: string;
-  nombre_contacto: string | null;
-  correo_contacto: string;
-  telefono: string | null;
-  fecha_registro: string;
-}
+type ClienteConConteo = Cliente & { licencias: { count: number }[] };
 
 export default function ClientesPage() {
-  const [userRole, setUserRole] = useState<string>(''); // sin privilegios hasta confirmar el rol 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  
-  // Estado para saber si estamos EDITANDO o CREANDO un cliente
-  const [clienteEnEdicion, setClienteEnEdicion] = useState<Cliente | null>(null);
+  const { puedeEditar, puedeBorrar } = useSesion();
+  const { avisar, confirmar } = useAvisos();
 
-  // Estados del Formulario
-  const [nombreEmpresa, setNombreEmpresa] = useState('');
-  const [nombreContacto, setNombreContacto] = useState('');
-  const [telefono, setTelefono] = useState('');
-  const [correoContacto, setCorreoContacto] = useState('');
+  const [clientes, setClientes] = useState<ClienteConConteo[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [busqueda, setBusqueda] = useState('');
+  const [formulario, setFormulario] = useState<{ cliente?: Cliente } | null>(null);
 
-  const [clientes, setClientes] = useState<Cliente[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
-
-  const fetchData = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: perfil } = await supabase
-        .from('perfiles')
-        .select('rol')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (perfil && perfil.rol) {
-        setUserRole(perfil.rol.toLowerCase());
-      }
-    }
-
-    const { data } = await supabase
+  const cargar = useCallback(async () => {
+    const { data, error } = await supabase
       .from('clientes')
-      .select('*')
+      .select('*, licencias(count)')
       .order('fecha_registro', { ascending: false });
+    if (error) avisar(`No se pudieron leer los clientes: ${error.message}`, 'error');
+    setClientes((data as ClienteConConteo[]) ?? []);
+    setCargando(false);
+  }, [avisar]);
 
-    if (data) setClientes(data);
-  };
+  // Carga inicial desde Supabase (los setState ocurren al llegar la respuesta)
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { cargar(); }, [cargar]);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const visibles = useMemo(() => {
+    const t = busqueda.trim().toLowerCase();
+    if (!t) return clientes;
+    return clientes.filter((c) =>
+      [c.nombre_empresa, c.nombre_contacto, c.correo_contacto, c.telefono].some((v) => v?.toLowerCase().includes(t)));
+  }, [clientes, busqueda]);
 
-  const puedeCrearYEditar = ['super_admin', 'admin', 'manager'].includes(userRole);
-  const puedeBorrar = ['super_admin', 'admin'].includes(userRole);
-
-  // FUNCIÓN PARA ABRIR EL MODAL EN MODO DE EDICIÓN
-  const abrirModalEdicion = (cliente: Cliente) => {
-    setClienteEnEdicion(cliente);
-    setNombreEmpresa(cliente.nombre_empresa);
-    setNombreContacto(cliente.nombre_contacto || '');
-    setTelefono(cliente.telefono || '');
-    setCorreoContacto(cliente.correo_contacto);
-    setIsModalOpen(true);
-  };
-
-  // FUNCIÓN PARA CERRAR Y LIMPIAR EL FORMULARIO
-  const cerrarModal = () => {
-    setIsModalOpen(false);
-    setClienteEnEdicion(null);
-    setNombreEmpresa('');
-    setNombreContacto('');
-    setTelefono('');
-    setCorreoContacto('');
-    setErrorMsg('');
-    setSuccessMsg('');
-  };
-
-  // PROCESAR GUARDADO (INSERCIÓN O ACTUALIZACIÓN)
-  const handleGuardarCliente = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!puedeCrearYEditar) return;
-
-    setLoading(true);
-    setErrorMsg('');
-    setSuccessMsg('');
-
-    const datosCliente = {
-      nombre_empresa: nombreEmpresa,
-      nombre_contacto: nombreContacto || null,
-      correo_contacto: correoContacto,
-      telefono: telefono || null,
-    };
-
-    let respuestaError = null;
-
-    if (clienteEnEdicion) {
-      // MODO EDICIÓN: Actualizar fila existente
-      const { error } = await supabase
-        .from('clientes')
-        .update(datosCliente)
-        .eq('id', clienteEnEdicion.id);
-      respuestaError = error;
-    } else {
-      // MODO CREACIÓN: Inyectar nueva fila
-      const { error } = await supabase
-        .from('clientes')
-        .insert([datosCliente]);
-      respuestaError = error;
-    }
-
-    if (respuestaError) {
-      if (respuestaError.code === '23505') {
-        setErrorMsg('Este correo electrónico ya está registrado con otra cuenta.');
-      } else {
-        setErrorMsg(`Error al procesar la operación: ${respuestaError.message}`);
-      }
-      setLoading(false);
-    } else {
-      setSuccessMsg(clienteEnEdicion ? '¡Cambios actualizados correctamente!' : '¡Establecimiento registrado con éxito!');
-      setLoading(false);
-      fetchData();
-
-      setTimeout(() => {
-        cerrarModal();
-      }, 1500);
-    }
-  };
-
-  const handleEliminarCliente = async (id: number) => {
-    if (!puedeBorrar) return;
-
-    const confirmar = confirm('¿Está seguro de eliminar este cliente de forma permanente? Esta acción no se puede deshacer.');
-    if (!confirmar) return;
-
-    const { error } = await supabase
-      .from('clientes')
-      .delete()
-      .eq('id', id);
-
-    if (!error) {
-      fetchData();
-    } else {
-      alert(`Error de restricción: ${error.message}`);
-    }
+  const eliminar = async (c: ClienteConConteo) => {
+    const total = c.licencias?.[0]?.count ?? 0;
+    const ok = await confirmar({
+      titulo: 'Eliminar cliente',
+      mensaje: total > 0
+        ? `${c.nombre_empresa} tiene ${total} licencia(s). Elimínalas o reasígnalas primero; si no, la base de datos rechazará la operación.`
+        : `Se eliminará ${c.nombre_empresa} de forma permanente.`,
+      textoConfirmar: 'Eliminar',
+      peligro: true,
+    });
+    if (!ok) return;
+    const { error } = await supabase.from('clientes').delete().eq('id', c.id);
+    if (error) { avisar(`No se pudo eliminar: ${error.message}`, 'error'); return; }
+    avisar('Cliente eliminado');
+    cargar();
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto overflow-x-hidden px-1">
-      
-      {/* ENCABEZADO RESPONSIVO */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-2xs">
-        <div className="space-y-1">
-          <h2 className="text-xl sm:text-2xl font-black text-[#232529] tracking-tight">Gestión de Clientes</h2>
-          <p className="text-slate-400 text-[11px] sm:text-xs font-medium leading-relaxed">Registro estructurado de centros deportivos, boxes y corporativos bajo contrato.</p>
-        </div>
-        
-        {puedeCrearYEditar ? (
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="w-full sm:w-auto bg-[#F47521] hover:bg-[#d65f13] text-white font-bold px-5 py-3 rounded-xl transition text-xs uppercase tracking-wider shadow-lg shadow-orange-500/10 flex items-center justify-center gap-2 shrink-0"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-            Añadir Cliente
-          </button>
-        ) : (
-          <div className="w-full sm:w-auto bg-slate-100 border border-slate-200 rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 text-slate-400 text-xs font-semibold shrink-0">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
-            Modo Consulta (Lectura)
-          </div>
+    <div className="space-y-6">
+      <EncabezadoPagina
+        titulo="Clientes"
+        descripcion="Gimnasios, boxes, estudios, academias y centros de entrenamiento que usan FitControl."
+        acciones={puedeEditar && (
+          <Boton icono={<IconoMas className="w-4 h-4" />} onClick={() => setFormulario({})} className="w-full sm:w-auto">Nuevo cliente</Boton>
         )}
-      </div>
+      />
 
-      {/* TABLA EJECUTIVA CON ANCHOS BLINDADOS Y SCROLL */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden">
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-          <h3 className="text-xs font-bold text-[#232529] uppercase tracking-wider font-mono">Cuentas Corporativas Activas</h3>
-          <span className="bg-[#232529] text-white text-[9px] font-bold px-2.5 py-1 rounded-md font-mono">
-            {clientes.length} REGISTROS
-          </span>
-        </div>
-
-        {/* Contenedor Elástico con Scroll Horizontal */}
-        <div className="w-full overflow-x-auto selection:bg-transparent">
-          {clientes.length === 0 ? (
-            <div className="p-12 sm:p-16 text-center text-slate-400 text-xs font-medium">No hay registros vinculados en el nodo central de datos.</div>
-          ) : (
-            <table className="w-full text-left border-collapse text-xs min-w-[850px]">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/50 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                  <th className="p-4 w-24">UUID ID</th>
-                  <th className="p-4">Establecimiento / Empresa</th>
-                  <th className="p-4">Contacto Titular</th>
-                  <th className="p-4">Canales de Enlace</th>
-                  <th className="p-4 w-36">Fecha de Alta</th>
-                  {puedeCrearYEditar && <th className="p-4 w-28 text-center">Acciones</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {clientes.map((cliente) => (
-                  <tr key={cliente.id} className="hover:bg-slate-50/40 transition">
-                    <td className="p-4 text-slate-400 font-mono text-[11px]">#{cliente.id}</td>
-                    <td className="p-4 font-bold text-[#232529] max-w-[200px] truncate">{cliente.nombre_empresa}</td>
-                    <td className="p-4 text-slate-600 font-medium max-w-[150px] truncate">{cliente.nombre_contacto || 'No asignado'}</td>
-                    <td className="p-4 space-y-0.5">
-                      <div className="text-slate-700 font-medium select-all">{cliente.correo_contacto}</div>
-                      {cliente.telefono && <div className="text-slate-400 font-mono text-[10px] select-all">{cliente.telefono}</div>}
-                    </td>
-                    <td className="p-4 text-slate-400 font-medium whitespace-nowrap">
-                      {new Date(cliente.fecha_registro).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' })}
-                    </td>
-                    
-                    {puedeCrearYEditar && (
-                      <td className="p-4">
-                        <div className="flex justify-center items-center gap-2">
-                          
-                          {/* BOTÓN EDITAR */}
-                          <button 
-                            onClick={() => abrirModalEdicion(cliente)}
-                            title="Modificar Información" 
-                            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200 transition bg-white shadow-3xs"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
-                          </button>
-                          
-                          {/* BOTÓN ELIMINAR */}
-                          {puedeBorrar ? (
-                            <button 
-                              onClick={() => handleEliminarCliente(cliente.id)} 
-                              title="Eliminar" 
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-200 hover:border-rose-200 transition bg-white shadow-3xs"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .         .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                            </button>
-                          ) : (
-                            <span className="text-[9px] text-slate-300 font-mono font-bold select-none px-1">Lock</span>
-                          )}
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      {/* MODAL INTELIGENTE AJUSTADO CONTRA REBOTES DE PANTALLA */}
-      {isModalOpen && puedeCrearYEditar && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl p-5 sm:p-6 relative max-h-[94vh] overflow-y-auto">
-            <button onClick={cerrarModal} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-lg p-1 transition">✕</button>
-            
-            <h3 className="text-xs sm:text-sm font-bold text-[#232529] uppercase tracking-wider border-b border-slate-100 pb-3 mb-4 font-sans flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4 text-[#F47521]"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
-              {clienteEnEdicion ? 'Modificar Cuenta Cliente' : 'Registrar Cuenta Cliente'}
-            </h3>
-            
-            {errorMsg && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-[11px] font-semibold p-3 rounded-xl text-center mb-4">{errorMsg}</div>}
-            {successMsg && <div className="bg-emerald-50 border border-emerald-200 text-emerald-600 text-[11px] font-semibold p-3 rounded-xl text-center mb-4">{successMsg}</div>}
-
-            <form onSubmit={handleGuardarCliente} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Nombre del Establecimiento</label>
-                <input type="text" required value={nombreEmpresa} onChange={(e) => setNombreEmpresa(e.target.value)} placeholder="Ej: Iron Forge Gym" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-[#F47521] focus:bg-white transition" />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Nombre del Dueño / Encargado</label>
-                <input type="text" value={nombreContacto} onChange={(e) => setNombreContacto(e.target.value)} placeholder="Ej: Carlos Mendoza" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-[#F47521] focus:bg-white transition" />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Teléfono de Oficina o Celular</label>
-                <input type="tel" value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: +52 331 691 9113" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-[#F47521] focus:bg-white transition" />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-mono">Correo Electrónico Corporativo</label>
-                <input type="email" required value={correoContacto} onChange={(e) => setCorreoContacto(e.target.value)} placeholder="contacto@establecimiento.com" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-[#F47521] focus:bg-white transition" />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={cerrarModal} className="w-1/2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl transition text-[10px] uppercase tracking-wider">Cancelar</button>
-                <button type="submit" disabled={loading} className="w-1/2 bg-[#F47521] hover:bg-[#d65f13] text-white font-bold py-2.5 rounded-xl transition text-[10px] uppercase tracking-wider shadow-md disabled:opacity-50">
-                  {loading ? 'Guardando...' : 'Confirmar'}
-                </button>
-              </div>
-            </form>
+      <Tarjeta className="overflow-hidden">
+        <div className="p-4 sm:p-5 border-b border-slate-100">
+          <div className="relative">
+            <IconoBuscar className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <Entrada type="search" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar por nombre, contacto, correo o teléfono" className="pl-11" aria-label="Buscar clientes" />
           </div>
         </div>
-      )}
 
+        {cargando ? (
+          <div className="p-5 space-y-3">{[0, 1, 2].map((i) => <Esqueleto key={i} className="h-16" />)}</div>
+        ) : visibles.length === 0 ? (
+          <EstadoVacio
+            icono={<IconoEdificio />}
+            titulo={clientes.length === 0 ? 'Aún no tienes clientes' : 'Sin resultados'}
+            descripcion={clientes.length === 0 ? 'Registra tu primer cliente para poder emitirle una licencia.' : 'Prueba con otra búsqueda.'}
+            accion={clientes.length === 0 && puedeEditar && <Boton icono={<IconoMas className="w-4 h-4" />} onClick={() => setFormulario({})}>Nuevo cliente</Boton>}
+          />
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {visibles.map((c) => {
+              const total = c.licencias?.[0]?.count ?? 0;
+              return (
+                <li key={c.id} className="px-4 sm:px-5 py-4 flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
+                  <div className="flex items-center gap-3 min-w-0 md:w-72 md:shrink-0">
+                    <span className="w-10 h-10 rounded-xl bg-marca-50 text-marca-600 font-bold flex items-center justify-center shrink-0 uppercase">
+                      {c.nombre_empresa.slice(0, 2)}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-tinta-900 truncate">{c.nombre_empresa}</p>
+                      <p className="text-xs text-slate-500 truncate">{c.nombre_contacto || 'Sin contacto'} · desde {formatoFecha(c.fecha_registro)}</p>
+                    </div>
+                  </div>
+
+                  {/* Contacto: en celular cada dato abre la app correspondiente */}
+                  <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-sm min-w-0 flex-1">
+                    <a href={`mailto:${c.correo_contacto}`} className="inline-flex items-center gap-1.5 text-slate-600 hover:text-marca-600 min-w-0">
+                      <IconoCorreo className="w-4 h-4 shrink-0 text-slate-400" /> <span className="truncate">{c.correo_contacto}</span>
+                    </a>
+                    {c.telefono && (
+                      <a href={`tel:${c.telefono}`} className="inline-flex items-center gap-1.5 text-slate-600 hover:text-marca-600">
+                        <IconoTelefono className="w-4 h-4 text-slate-400" /> {c.telefono}
+                      </a>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between md:justify-end gap-2 md:shrink-0">
+                    <Link href={`/admin/licencias?buscar=${encodeURIComponent(c.nombre_empresa)}`}>
+                      <Insignia tono={total > 0 ? 'naranja' : 'gris'}>{total} {total === 1 ? 'licencia' : 'licencias'}</Insignia>
+                    </Link>
+                    <div className="flex gap-2">
+                      {c.telefono && (
+                        <a href={enlaceWhatsApp(c.telefono, `Hola ${c.nombre_contacto ?? ''}, te escribo de FitControl.`)} target="_blank" rel="noopener noreferrer"
+                          aria-label="Escribir por WhatsApp" title="Escribir por WhatsApp"
+                          className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-slate-200 bg-white text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 hover:border-emerald-200 transition">
+                          <IconoWhatsApp className="w-4 h-4" />
+                        </a>
+                      )}
+                      {puedeEditar && (
+                        <>
+                          <Link href={`/admin/licencias?cliente=${c.id}`} className={clasesBoton('secundario', 'sm', 'h-9')} title="Emitir licencia para este cliente">
+                            <IconoLlave className="w-4 h-4" /> <span className="hidden sm:inline">Emitir licencia</span>
+                          </Link>
+                          <BotonIcono etiqueta="Editar cliente" onClick={() => setFormulario({ cliente: c })}><IconoLapiz className="w-4 h-4" /></BotonIcono>
+                        </>
+                      )}
+                      {puedeBorrar && (
+                        <BotonIcono etiqueta="Eliminar cliente" tono="peligro" onClick={() => eliminar(c)}><IconoBasura className="w-4 h-4" /></BotonIcono>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Tarjeta>
+
+      {formulario && (
+        <FormularioCliente
+          cliente={formulario.cliente}
+          onCerrar={() => setFormulario(null)}
+          onGuardado={(nuevo) => {
+            setFormulario(null);
+            avisar(nuevo ? 'Cliente registrado' : 'Cambios guardados');
+            cargar();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function FormularioCliente({ cliente, onCerrar, onGuardado }: { cliente?: Cliente; onCerrar: () => void; onGuardado: (nuevo: boolean) => void }) {
+  const [empresa, setEmpresa] = useState(cliente?.nombre_empresa ?? '');
+  const [contacto, setContacto] = useState(cliente?.nombre_contacto ?? '');
+  const [correo, setCorreo] = useState(cliente?.correo_contacto ?? '');
+  const [telefono, setTelefono] = useState(cliente?.telefono ?? '');
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+
+  const guardar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGuardando(true);
+    setError('');
+    const datos = {
+      nombre_empresa: empresa.trim(),
+      nombre_contacto: contacto.trim() || null,
+      correo_contacto: correo.trim().toLowerCase(),
+      telefono: telefono.trim() || null,
+    };
+    const { error } = cliente
+      ? await supabase.from('clientes').update(datos).eq('id', cliente.id)
+      : await supabase.from('clientes').insert(datos);
+    setGuardando(false);
+    if (error) {
+      setError(error.code === '23505' ? 'Ese correo ya está registrado en otro cliente.' : error.message);
+      return;
+    }
+    onGuardado(!cliente);
+  };
+
+  return (
+    <Modal
+      abierto
+      onCerrar={onCerrar}
+      titulo={cliente ? 'Editar cliente' : 'Nuevo cliente'}
+      pie={
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          <Boton variante="secundario" onClick={onCerrar} className="w-full sm:w-auto">Cancelar</Boton>
+          <Boton type="submit" form="form-cliente" cargando={guardando} className="w-full sm:w-auto">{cliente ? 'Guardar cambios' : 'Registrar cliente'}</Boton>
+        </div>
+      }
+    >
+      <form id="form-cliente" onSubmit={guardar} className="space-y-5">
+        {error && <Alerta>{error}</Alerta>}
+        <Campo etiqueta="Nombre del establecimiento">
+          {(id) => <Entrada id={id} required value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej. Titan Training Center" autoComplete="organization" />}
+        </Campo>
+        <Campo etiqueta="Persona de contacto">
+          {(id) => <Entrada id={id} value={contacto} onChange={(e) => setContacto(e.target.value)} placeholder="Ej. Laura Méndez" autoComplete="name" />}
+        </Campo>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <Campo etiqueta="Correo">
+            {(id) => <Entrada id={id} type="email" required value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="contacto@negocio.com" autoComplete="email" inputMode="email" />}
+          </Campo>
+          <Campo etiqueta="Teléfono (WhatsApp)" ayuda="10 dígitos; se usa para enviarle la llave.">
+            {(id) => <Entrada id={id} type="tel" value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="33 1234 5678" autoComplete="tel" inputMode="tel" />}
+          </Campo>
+        </div>
+      </form>
+    </Modal>
   );
 }
