@@ -1,26 +1,71 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ==========================================================================
+   Sistema de diseño FitControl
+   Colores de marca, tipografía y animaciones compartidas por landing y panel.
+   Uso en Tailwind: bg-marca-500, text-tinta-900, border-borde, etc.
+   ========================================================================== */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* Naranja FitControl */
+  --color-marca-50: #fff4ec;
+  --color-marca-100: #ffe6d3;
+  --color-marca-200: #fdc9a3;
+  --color-marca-500: #f47521;
+  --color-marca-600: #d65f13;
+  --color-marca-700: #b04c0d;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* Grafito de la marca (barra lateral, títulos) */
+  --color-tinta-700: #3a3d43;
+  --color-tinta-800: #2c2e33;
+  --color-tinta-900: #232529;
+  --color-tinta-950: #18191c;
+
+  --animate-aparecer: aparecer 0.18s ease-out;
+  --animate-subir: subir 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-deslizar: deslizar 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  @keyframes aparecer {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes subir {
+    from { opacity: 0; transform: translateY(16px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes deslizar {
+    from { opacity: 0; transform: translateX(24px); }
+    to { opacity: 1; transform: translateX(0); }
   }
 }
 
+html {
+  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+}
+
+/* Foco visible y consistente para teclado (accesibilidad) */
+:focus-visible {
+  outline: 2px solid var(--color-marca-500);
+  outline-offset: 2px;
+}
+
+/* Respeta a quien desactiva animaciones en su sistema */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Barra inferior móvil: respeta el área segura de iPhone */
+.pb-seguro {
+  padding-bottom: env(safe-area-inset-bottom);
 }

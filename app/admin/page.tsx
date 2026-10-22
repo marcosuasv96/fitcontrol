@@ -1,332 +1,255 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase'; // Conector unificado central
+import Link from 'next/link';
+import { useEffect, useState, type ReactNode } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useSesion } from '@/lib/sesion';
+import {
+  type Licencia, diasRestantes, estadoDe, PRESENTACION_ESTADO, ingresoMensual, formatoDinero, formatoFecha, haceCuanto, sinReportarDesde,
+} from '@/lib/licencias';
+import { Tarjeta, Insignia, Esqueleto, EstadoVacio, EncabezadoPagina, clasesBoton, cx } from '@/components/ui';
+import {
+  IconoEdificio, IconoLlave, IconoAlerta, IconoDinero, IconoMas, IconoWifiOff, IconoChevron, IconoReloj, IconoCheck,
+} from '@/components/iconos';
 
-// DEFINICIÓN DE TIPOS FORMALES ADAPTADOS
-interface LicenciaVencer {
+interface Evento {
   id: number;
-  clave_licencia: string;
-  fecha_expiracion: string;
-  clientes: { nombre_empresa: string } | null;
-  planes: { nombre: string } | null; // Tipado estricto e independiente
-  dias_restantes: number;
+  resultado: string;
+  equipo: string | null;
+  creado_en: string;
+  clave: string | null;
 }
 
-interface PlanPopular {
-  id: number;
-  nombre_plan: string;
-  precio: number;
-  total_ventas: number;
-  porcentaje: number;
-}
+const TEXTO_EVENTO: Record<string, { texto: string; tono: 'verde' | 'rojo' | 'ambar' | 'gris' | 'azul' }> = {
+  ACTIVACION: { texto: 'Activó en un equipo', tono: 'azul' },
+  VALIDACION: { texto: 'Validó su licencia', tono: 'verde' },
+  HARDWARE_DISTINTO: { texto: 'Intento desde otra PC', tono: 'rojo' },
+  LICENCIA_VENCIDA: { texto: 'Intento con licencia vencida', tono: 'ambar' },
+  LICENCIA_BLOQUEADA: { texto: 'Intento con licencia suspendida', tono: 'gris' },
+};
 
-export default function DashboardAdmin() {
-  // Estados para tarjetas superiores
+const DIAS_SIN_CONEXION_ALERTA = 7;
+
+export default function ResumenPage() {
+  const { email } = useSesion();
+  const [cargando, setCargando] = useState(true);
   const [totalClientes, setTotalClientes] = useState(0);
-  const [licenciasActivas, setLicenciasActivas] = useState(0);
-  const [licenciasPorVencerCount, setLicenciasPorVencerCount] = useState(0);
-  const [ingresoEstimado, setIngresoEstimado] = useState(0);
-  
-  // Estados para las secciones analíticas
-  const [proximosVencimientos, setProximosVencimientos] = useState<LicenciaVencer[]>([]);
-  const [planesMasVendidos, setPlanesMasVendidos] = useState<PlanPopular[]>([]);
-  
-  const [loading, setLoading] = useState(true);
+  const [licencias, setLicencias] = useState<Licencia[]>([]);
+  const [eventos, setEventos] = useState<Evento[] | null>(null);
 
   useEffect(() => {
-    async function cargarMétricasYListas() {
-      setLoading(true);
-      const hoy = new Date();
-      
-      // 1. Contar Clientes Totales
-      const { count: cliCount } = await supabase.from('clientes').select('*', { count: 'exact', head: true });
-      setTotalClientes(cliCount || 0);
-
-      // 2. Contar Licencias Activas Generales
-      const { count: licCount } = await supabase.from('licencias').select('*', { count: 'exact', head: true }).eq('esta_activa', true);
-      setLicenciasActivas(licCount || 0);
-
-      // 3. Obtener licencias vigentes vinculando tus columnas reales de Postgres
-      const { data: licenciasData } = await supabase
-        .from('licencias')
-        .select('id, clave_licencia, fecha_expiracion, plan_id, esta_activa, clientes(nombre_empresa), planes(nombre, precio, tipo_plan)')
-        .eq('esta_activa', true);
-
-      if (licenciasData) {
-        let sumaMensual = 0;
-        let conteoVencimientos7Dias = 0;
-        const listaVencimientos: LicenciaVencer[] = [];
-        const conteoPlanes: { [key: number]: { nombre: string; precio: number; total: number } } = {};
-
-        licenciasData.forEach((lic: any) => {
-          if (lic.planes && lic.plan_id) {
-            if (!conteoPlanes[lic.plan_id]) {
-              conteoPlanes[lic.plan_id] = {
-                nombre: lic.planes.nombre,
-                precio: parseFloat(lic.planes.precio) || 0,
-                total: 0
-              };
-            }
-            conteoPlanes[lic.plan_id].total += 1;
-
-            // ALGORITMO FINANCIERO BASADO EN TU ENUM DE PRODUCCIÓN
-            const precio = parseFloat(lic.planes.precio) || 0;
-            const vigencia = lic.planes.tipo_plan;
-            
-            switch (vigencia) {
-              case 'mensual':
-                sumaMensual += precio;
-                break;
-              case 'trimestral':
-                sumaMensual += precio / 3;
-                break;
-              case 'semestral':
-                sumaMensual += precio / 6;
-                break;
-              case 'anual':
-                sumaMensual += precio / 12;
-                break;
-              case 'permanente':
-                sumaMensual += precio * 0.05; // 5% de amortización contable mensual
-                break;
-              default:
-                sumaMensual += precio;
-            }
-
-            // Calcular días restantes para vencimiento
-            const expDate = new Date(lic.fecha_expiracion);
-            const diferenciaTiempo = expDate.getTime() - hoy.getTime();
-            const diasRestantes = Math.ceil(diferenciaTiempo / (1000 * 60 * 60 * 24));
-
-            if (diasRestantes <= 30) {
-              listaVencimientos.push({
-                id: lic.id,
-                clave_licencia: lic.clave_licencia,
-                fecha_expiracion: lic.fecha_expiracion,
-                clientes: lic.clientes,
-                planes: { nombre: lic.planes.nombre }, // Asignación elástica exacta
-                dias_restantes: diasRestantes
-              });
-
-              if (diasRestantes <= 7 && diasRestantes >= 0) {
-                conteoVencimientos7Dias += 1;
-              }
-            }
-          }
-        });
-
-        setIngresoEstimado(sumaMensual);
-        setLicenciasPorVencerCount(conteoVencimientos7Dias);
-
-        listaVencimientos.sort((a, b) => a.dias_restantes - b.dias_restantes);
-        setProximosVencimientos(listaVencimientos.slice(0, 5));
-
-        const totalLicenciasEmitidas = licenciasData.length || 1;
-        const listaPlanesOrdenados: PlanPopular[] = Object.keys(conteoPlanes).map((key: any) => {
-          const item = conteoPlanes[key];
-          return {
-            id: parseInt(key),
-            nombre_plan: item.nombre,
-            precio: item.precio,
-            total_ventas: item.total,
-            porcentaje: Math.round((item.total / totalLicenciasEmitidas) * 100)
-          };
-        });
-
-        listaPlanesOrdenados.sort((a, b) => b.total_ventas - a.total_ventas);
-        setPlanesMasVendidos(listaPlanesOrdenados);
-      }
-
-      setLoading(false);
+    async function cargar() {
+      const [cli, lic, evt] = await Promise.all([
+        supabase.from('clientes').select('id', { count: 'exact', head: true }),
+        supabase.from('licencias').select('*, clientes(nombre_empresa, telefono), planes(nombre, tipo_plan, precio)'),
+        supabase.from('licencia_eventos').select('id, resultado, equipo, creado_en, clave').order('creado_en', { ascending: false }).limit(8),
+      ]);
+      setTotalClientes(cli.count ?? 0);
+      setLicencias((lic.data as Licencia[]) ?? []);
+      // Si aún no se ejecuta el SQL de telemetría, la tarjeta de actividad simplemente no se muestra
+      setEventos(evt.error ? null : (evt.data as Evento[]));
+      setCargando(false);
     }
-
-    cargarMétricasYListas();
+    cargar();
   }, []);
 
+  const vigentes = licencias.filter((l) => l.esta_activa && diasRestantes(l.fecha_expiracion) >= 0);
+  const mrr = vigentes.reduce((s, l) => s + (l.planes ? ingresoMensual(l.planes.tipo_plan, Number(l.planes.precio) || 0) : 0), 0);
+
+  const atencion = licencias
+    .filter((l) => ['vencida', 'por_vencer'].includes(estadoDe(l)))
+    .sort((a, b) => diasRestantes(a.fecha_expiracion) - diasRestantes(b.fecha_expiracion));
+
+  const sinConexion = vigentes.filter((l) => l.hardware_id && sinReportarDesde(l.ultima_validacion, DIAS_SIN_CONEXION_ALERTA));
+
+  const porPlan = Object.values(
+    vigentes.reduce<Record<string, { nombre: string; total: number }>>((acc, l) => {
+      const nombre = l.planes?.nombre ?? 'Sin plan';
+      acc[nombre] = acc[nombre] ?? { nombre, total: 0 };
+      acc[nombre].total += 1;
+      return acc;
+    }, {}),
+  ).sort((a, b) => b.total - a.total);
+
+  const saludo = (() => {
+    const h = new Date().getHours();
+    return h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches';
+  })();
+
   return (
-    <div className="space-y-6 sm:space-y-8 p-4 sm:p-6 max-w-7xl mx-auto overflow-x-hidden">
-      
-      {/* Encabezado Adaptativo */}
-      <div className="space-y-1">
-        <h2 className="text-xl sm:text-2xl font-black text-[#232529] tracking-tight">Resumen Ejecutivo Global</h2>
-        <p className="text-slate-400 text-[11px] sm:text-xs font-medium leading-relaxed">Métricas estructurales y rendimiento de licencias de FitControl en tiempo real.</p>
+    <div className="space-y-6 sm:space-y-8">
+      <EncabezadoPagina
+        titulo={`${saludo}${email ? `, ${email.split('@')[0]}` : ''}`}
+        descripcion="Así va tu cartera de centros de entrenamiento hoy."
+        acciones={
+          <Link href="/admin/licencias?nueva=1" className={clasesBoton('primario', 'md', 'w-full sm:w-auto')}>
+            <IconoMas className="w-4 h-4" /> Emitir licencia
+          </Link>
+        }
+      />
+
+      {/* ------------------------------------------------ Métricas */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Metrica cargando={cargando} etiqueta="Clientes" valor={totalClientes} icono={<IconoEdificio />} href="/admin/clientes" />
+        <Metrica cargando={cargando} etiqueta="Licencias vigentes" valor={vigentes.length} icono={<IconoLlave />} href="/admin/licencias" />
+        <Metrica
+          cargando={cargando}
+          etiqueta="Requieren atención"
+          valor={atencion.length}
+          icono={<IconoAlerta />}
+          resaltar={atencion.length > 0}
+          href="/admin/licencias?filtro=atencion"
+        />
+        <Metrica cargando={cargando} etiqueta="Ingreso recurrente / mes" valor={formatoDinero(mrr)} icono={<IconoDinero />} />
       </div>
 
-      {/* Grid de Tarjetas de Indicadores (Fila única en móviles, grid expansivo después) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-        
-        {/* Clientes */}
-        <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col justify-between min-h-[130px] sm:min-h-[140px]">
-          <div>
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-[10px] font-bold uppercase tracking-wider font-mono">Clientes Totales</span>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
-            </div>
-            <p className="text-2xl sm:text-3xl font-black text-[#232529] mt-2 sm:mt-3 font-mono">{loading ? '...' : totalClientes}</p>
-          </div>
-          <span className="text-[10px] text-slate-400 font-medium block mt-2">Establecimientos registrados</span>
-        </div>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* ------------------------------------------------ Requieren atención */}
+        <Tarjeta className="xl:col-span-2 overflow-hidden">
+          <EncabezadoTarjeta titulo="Vencimientos" descripcion="Vencidas o que vencen en los próximos 15 días" />
+          {cargando ? (
+            <ListaEsqueleto />
+          ) : atencion.length === 0 ? (
+            <EstadoVacio icono={<IconoCheck />} titulo="Todo en orden" descripcion="Ninguna licencia vence en los próximos 15 días." />
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {atencion.slice(0, 6).map((l) => {
+                const dias = diasRestantes(l.fecha_expiracion);
+                const est = PRESENTACION_ESTADO[estadoDe(l)];
+                return (
+                  <li key={l.id}>
+                    <Link href={`/admin/licencias?buscar=${encodeURIComponent(l.clave_licencia)}`} className="flex items-center gap-4 px-5 py-3.5 hover:bg-slate-50 transition">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-tinta-900">{l.clientes?.nombre_empresa ?? 'Cliente eliminado'}</p>
+                        <p className="text-xs text-slate-500">{l.planes?.nombre ?? '—'} · {formatoFecha(l.fecha_expiracion)}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <Insignia tono={est.tono}>{dias < 0 ? `Venció hace ${-dias} d` : dias === 0 ? 'Vence hoy' : `${dias} días`}</Insignia>
+                      </div>
+                      <IconoChevron className="w-4 h-4 text-slate-300 shrink-0" />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Tarjeta>
 
-        {/* Licencias Activas */}
-        <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col justify-between min-h-[130px] sm:min-h-[140px]">
-          <div>
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-[10px] font-bold uppercase tracking-wider font-mono">Licencias Vigentes</span>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4 text-emerald-500"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-            </div>
-            <p className="text-2xl sm:text-3xl font-black text-emerald-600 mt-2 sm:mt-3 font-mono">{loading ? '...' : licenciasActivas}</p>
-          </div>
-          <span className="text-[10px] text-emerald-600 font-bold block mt-2">● Servidores en producción</span>
-        </div>
-
-        {/* Alertas Críticas */}
-        <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col justify-between min-h-[130px] sm:min-h-[140px]">
-          <div>
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-[10px] font-bold uppercase tracking-wider font-mono">Alertas Críticas</span>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4 text-amber-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
-            </div>
-            <p className="text-2xl sm:text-3xl font-black text-amber-500 mt-2 sm:mt-3 font-mono">{loading ? '...' : licenciasPorVencerCount}</p>
-          </div>
-          <span className="text-[10px] text-slate-400 font-medium block mt-2">Vencimientos prox. 7 días</span>
-        </div>
-
-        {/* Ingresos Mensuales */}
-        <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col justify-between min-h-[130px] sm:min-h-[140px]">
-          <div>
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-[#F47521]">Ingresos Mensuales Est.</span>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4 text-[#F47521]"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797-2.101c.727 0 1.448.024 2.163.072m-17.96 4.029a60.142 60.142 0 0 0 2.528-3.041m15.432 3.041a60.143 60.143 0 0 1-2.528-3.041m0 0a59.82 59.82 0 0 1-4.144-4.213m4.144 4.213c.532.07 1.063.13 1.593.177M15.5 16.5V12m0 0a3 3 0 1 1 6 0v4.5m-6-4.5a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5A3.375 3.375 0 0 0 6.375 3H5.25m11.9-3.664A2.251 2.251 0 0 0 15 2.25v1.5a2.251 2.251 0 0 0 2.15 2.25h1.5a2.251 2.251 0 0 0 2.25-2.15v-1.5a2.251 2.251 0 0 0-2.25-2.25h-1.5ZM3 16.5v-2.25A2.25 2.25 0 0 1 5.25 12h1.5a2.25 2.25 0 0 1 2.25 2.25v2.25A2.25 2.25 0 0 1 6.75 18.75h-1.5A2.25 2.25 0 0 1 3 16.5Z" /></svg>
-            </div>
-            <p className="text-xl sm:text-2xl lg:text-3xl font-black text-[#232529] mt-2 sm:mt-3 font-mono truncate">
-              ${loading ? '...' : ingresoEstimado.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-[10px] text-slate-400 font-bold font-sans">MXN</span>
-            </p>
-          </div>
-          <span className="text-[10px] text-slate-400 font-medium block mt-2">Flujo de caja SaaS amortizado</span>
-        </div>
-      </div>
-
-      {/* SECCIÓN ANALÍTICA RESPONSIVA (Se apila verticalmente en móviles con flex-col o cols-1) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* TABLA DE PRÓXIMOS VENCIMIENTOS CON SCROLL SEGURO */}
-        <div className="grid-cols-1 lg:col-span-7 bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden flex flex-col justify-between">
-          <div>
-            <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row gap-2 justify-between sm:items-center">
-              <h3 className="text-xs font-bold text-[#232529] uppercase tracking-wider font-sans flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                Alertas de Expiración Próximas
-              </h3>
-              <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase font-mono self-start sm:self-auto">Top 5 Inminentes</span>
-            </div>
-
-            {/* Contenedor con Scroll Horizontal Antidesborde */}
-            <div className="w-full overflow-x-auto selection:bg-transparent">
-              {loading ? (
-                <div className="p-8 text-center text-slate-400 text-xs font-medium">Cargando bitácora de licencias...</div>
-              ) : proximosVencimientos.length === 0 ? (
-                <div className="p-12 text-center text-slate-400 text-xs font-medium">No hay licencias próximas a expirar en los siguientes 30 días.</div>
-              ) : (
-                <table className="w-full min-w-[500px] sm:min-w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-100 bg-slate-50/30 text-[10px] font-bold text-slate-400 uppercase font-mono tracking-wider">
-                      <th className="p-3.5">Establecimiento</th>
-                      <th className="p-3.5">Plan Contratado</th>
-                      <th className="p-3.5">Estatus de Tiempo</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {proximosVencimientos.map((lic) => (
-                      <tr key={lic.id} className="hover:bg-slate-50/50 transition">
-                        <td className="p-3.5 font-bold text-[#232529] max-w-[180px] truncate">{lic.clientes?.nombre_empresa}</td>
-                        <td className="p-3.5 text-slate-500 font-medium">{lic.planes?.nombre}</td>
-                        <td className="p-3.5">
-                          {lic.dias_restantes < 0 ? (
-                            <span className="bg-rose-50 border border-rose-100 text-rose-600 font-bold px-2.5 py-1 rounded-md text-[10px] inline-block whitespace-nowrap">
-                              Vencida hace {Math.abs(lic.dias_restantes)} días
-                            </span>
-                          ) : lic.dias_restantes === 0 ? (
-                            <span className="bg-amber-100 text-amber-800 font-black px-2.5 py-1 rounded-md text-[10px] animate-pulse inline-block whitespace-nowrap">
-                              Vence Hoy
-                            </span>
-                          ) : lic.dias_restantes <= 7 ? (
-                            <span className="bg-amber-50 border border-amber-100 text-amber-700 font-bold px-2.5 py-1 rounded-md text-[10px] inline-block whitespace-nowrap">
-                              Expira en {lic.dias_restantes} días
-                            </span>
-                          ) : (
-                            <span className="bg-slate-100 text-slate-600 font-medium px-2.5 py-1 rounded-md text-[10px] inline-block whitespace-nowrap">
-                              {lic.dias_restantes} días vigentes
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-          <div className="p-3 bg-slate-50/50 border-t border-slate-100 text-right">
-            <span className="text-[9px] font-bold text-slate-400 uppercase font-mono">Monitoreo Criptográfico Activo</span>
-          </div>
-        </div>
-
-        {/* MÓDULO DE PLANES MÁS VENDIDOS */}
-        <div className="grid-cols-1 lg:col-span-5 bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden flex flex-col justify-between">
-          <div>
-            <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-              <h3 className="text-xs font-bold text-[#232529] uppercase tracking-wider font-sans flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4 text-[#F47521]"><path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.983 8.983 0 0 1 3.361-6.867 8.21 8.21 0 0 1 3 2.48Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 0 0 .495-7.467 5.99 5.99 0 0 0-1.925 3.546 5.974 5.974 0 0 1-2.133-1A3.75 3.75 0 0 0 12 18Z" /></svg>
-                Volumen de Planes SaaS
-              </h3>
-              <span className="text-[10px] font-bold text-[#F47521] uppercase font-mono tracking-wider">Métricas</span>
-            </div>
-
-            <div className="p-4 sm:p-5 space-y-4">
-              {loading ? (
-                <div className="text-center text-slate-400 text-xs py-4 font-medium">Analizando facturación...</div>
-              ) : planesMasVendidos.length === 0 ? (
-                <div className="text-center text-slate-400 text-xs py-6 font-medium">Aún no hay licencias vinculadas para calcular tendencias.</div>
-              ) : (
-                planesMasVendidos.map((plan) => (
-                  <div key={plan.id} className="space-y-1.5">
-                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center text-xs gap-0.5">
-                      <span className="font-bold text-[#232529]">{plan.nombre_plan}</span>
-                      <span className="text-slate-400 font-mono text-[10px] sm:text-[11px]">
-                        <strong className="text-slate-700">{plan.total_ventas}</strong> {plan.total_ventas === 1 ? 'cuenta' : 'cuentas'} ({plan.porcentaje}%)
-                      </span>
+        {/* ------------------------------------------------ Distribución por plan */}
+        <Tarjeta className="overflow-hidden">
+          <EncabezadoTarjeta titulo="Licencias por plan" descripcion="Solo vigentes" />
+          <div className="p-5 space-y-4">
+            {cargando ? (
+              <>
+                <Esqueleto className="h-8" /><Esqueleto className="h-8" /><Esqueleto className="h-8" />
+              </>
+            ) : porPlan.length === 0 ? (
+              <p className="text-sm text-slate-500">Aún no hay licencias vigentes.</p>
+            ) : (
+              porPlan.map((p) => {
+                const pct = Math.round((p.total / vigentes.length) * 100);
+                return (
+                  <div key={p.nombre}>
+                    <div className="flex justify-between text-sm mb-1.5">
+                      <span className="font-medium text-tinta-900 truncate pr-2">{p.nombre}</span>
+                      <span className="text-slate-500 tabular-nums">{p.total} · {pct}%</span>
                     </div>
-                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200/40">
-                      <div 
-                        className="bg-[#F47521] h-full rounded-full transition-all duration-500" 
-                        style={{ width: `${plan.porcentaje}%` }}
-                      />
+                    <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                      <div className="h-full rounded-full bg-marca-500" style={{ width: `${pct}%` }} />
                     </div>
                   </div>
-                ))
-              )}
-            </div>
+                );
+              })
+            )}
           </div>
-          <div className="p-3 bg-slate-50/50 border-t border-slate-100 text-center">
-            <span className="text-[9px] font-bold text-slate-400 uppercase font-mono">Participación de mercado interna</span>
-          </div>
-        </div>
+        </Tarjeta>
 
-      </div>
+        {/* ------------------------------------------------ Sin conexión */}
+        <Tarjeta className="xl:col-span-2 overflow-hidden">
+          <EncabezadoTarjeta
+            titulo="Equipos sin conexión"
+            descripcion={`Licencias vigentes que no validan hace más de ${DIAS_SIN_CONEXION_ALERTA} días`}
+          />
+          {cargando ? (
+            <ListaEsqueleto />
+          ) : sinConexion.length === 0 ? (
+            <EstadoVacio icono={<IconoCheck />} titulo="Todos los equipos se reportan" descripcion="Cada PC activa ha validado su licencia recientemente." />
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {sinConexion.slice(0, 6).map((l) => (
+                <li key={l.id} className="flex items-center gap-4 px-5 py-3.5">
+                  <span className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0"><IconoWifiOff className="w-5 h-5" /></span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-tinta-900">{l.clientes?.nombre_empresa ?? '—'}</p>
+                    <p className="text-xs text-slate-500 truncate">{l.equipo_nombre ?? 'PC'} · {haceCuanto(l.ultima_validacion) ?? 'nunca ha validado con la versión nueva'}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Tarjeta>
 
-      {/* Registro Informativo Inferior Adaptado */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start gap-3 sm:gap-4 shadow-md">
-        <div className="p-2 bg-slate-800 rounded-lg border border-slate-700 text-[#F47521] shrink-0">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25m18 0A2.25 2.25 0 0 0 18.75 3H5.25A2.25 2.25 0 0 0 3 5.25m18 0V12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 12V5.25" /></svg>
-        </div>
-        <div className="space-y-1">
-          <h4 className="font-bold text-slate-200 text-xs sm:text-sm tracking-wide">Algoritmo Analítico Automatizado</h4>
-          <p className="text-[10px] sm:text-[11px] text-slate-400 leading-relaxed">
-            Los módulos inferiores evalúan de forma cruzada la fecha de expiración guardada en tu tabla de licencias contra la fecha del servidor, entregándote auditorías de tiempo inmediatas para prevenir cancelaciones y optimizar flujos de renovación de contratos comerciales.
-          </p>
-        </div>
+        {/* ------------------------------------------------ Actividad reciente */}
+        {eventos !== null && (
+          <Tarjeta className="overflow-hidden">
+            <EncabezadoTarjeta titulo="Actividad reciente" descripcion="Activaciones y validaciones de las PC" />
+            {eventos.length === 0 ? (
+              <EstadoVacio icono={<IconoReloj />} titulo="Sin actividad todavía" />
+            ) : (
+              <ol className="p-5 space-y-4">
+                {eventos.map((e) => {
+                  const info = TEXTO_EVENTO[e.resultado] ?? { texto: e.resultado, tono: 'gris' as const };
+                  return (
+                    <li key={e.id} className="flex gap-3">
+                      <span className={cx('mt-1.5 w-2 h-2 rounded-full shrink-0', {
+                        verde: 'bg-emerald-500', rojo: 'bg-rose-500', ambar: 'bg-amber-500', gris: 'bg-slate-400', azul: 'bg-sky-500',
+                      }[info.tono])} />
+                      <div className="min-w-0">
+                        <p className="text-sm text-tinta-900">{info.texto}</p>
+                        <p className="text-xs text-slate-500 truncate">{e.equipo ?? 'PC'} · {haceCuanto(e.creado_en)}</p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </Tarjeta>
+        )}
       </div>
+    </div>
+  );
+}
+
+function Metrica({ etiqueta, valor, icono, cargando, resaltar, href }: {
+  etiqueta: string; valor: ReactNode; icono: ReactNode; cargando: boolean; resaltar?: boolean; href?: string;
+}) {
+  const contenido = (
+    <Tarjeta className={cx('p-4 sm:p-5 h-full transition', href && 'hover:border-slate-300 hover:shadow-sm', resaltar && 'border-amber-200 bg-amber-50/40')}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs sm:text-sm font-medium text-slate-500 leading-snug">{etiqueta}</p>
+        <span className={cx('w-9 h-9 rounded-xl flex items-center justify-center shrink-0 [&>svg]:w-5 [&>svg]:h-5', resaltar ? 'bg-amber-100 text-amber-600' : 'bg-marca-50 text-marca-600')}>
+          {icono}
+        </span>
+      </div>
+      {cargando ? <Esqueleto className="h-8 w-20 mt-3" /> : <p className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-tinta-900 tabular-nums">{valor}</p>}
+    </Tarjeta>
+  );
+  return href ? <Link href={href} className="block">{contenido}</Link> : contenido;
+}
+
+function EncabezadoTarjeta({ titulo, descripcion }: { titulo: string; descripcion?: string }) {
+  return (
+    <div className="px-5 pt-5 pb-3">
+      <h2 className="font-semibold text-tinta-900">{titulo}</h2>
+      {descripcion && <p className="text-xs text-slate-500 mt-0.5">{descripcion}</p>}
+    </div>
+  );
+}
+
+function ListaEsqueleto() {
+  return (
+    <div className="px-5 pb-5 space-y-3">
+      {[0, 1, 2].map((i) => <Esqueleto key={i} className="h-12" />)}
     </div>
   );
 }

@@ -1,352 +1,370 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ComponentType } from 'react';
 import Image from 'next/image';
-import { supabase } from '@/lib/supabase'; // Conector centralizado unificado
+import Link from 'next/link';
+import { supabase } from '@/lib/supabase';
+import { type Plan, NOMBRES_TIPO_PLAN, SUFIJO_PRECIO, formatoDinero } from '@/lib/licencias';
+import { clasesBoton, cx } from '@/components/ui';
+import {
+  IconoUsuarios, IconoCredencial, IconoCaja, IconoCarrito, IconoGrafica, IconoEscudo, IconoWifiOff, IconoComputadora,
+  IconoCheck, IconoMenu, IconoCerrar, IconoWhatsApp, IconoChevron, IconoDescarga, IconoLlave, IconoReloj,
+} from '@/components/iconos';
 
-interface Plan {
-  id: number;
-  nombre: string;
-  descripcion: string | null;
-  precio: number;
-  tipo_plan: 'mensual' | 'trimestral' | 'semestral' | 'anual' | 'permanente';
-  esta_disponible: boolean;
-}
+const WHATSAPP = '523316919113';
+const enlaceWA = (texto: string) => `https://wa.me/${WHATSAPP}?text=${encodeURIComponent(texto)}`;
+const MENSAJE_GENERAL = 'Hola, me interesa recibir más información sobre el sistema FitControl.';
+
+const NAV = [
+  { href: '#funciones', texto: 'Funciones' },
+  { href: '#como-empezar', texto: 'Cómo empezar' },
+  { href: '#precios', texto: 'Precios' },
+  { href: '#preguntas', texto: 'Preguntas' },
+];
+
+const FUNCIONES: { Icono: ComponentType<{ className?: string }>; titulo: string; texto: string }[] = [
+  { Icono: IconoUsuarios, titulo: 'Socios y membresías', texto: 'Expediente con foto, historial de pagos, renovaciones y avisos de cumpleaños.' },
+  { Icono: IconoCredencial, titulo: 'Credenciales con código de barras', texto: 'Imprime credenciales con tu logo en 3 plantillas: clásica, horizontal o deportiva.' },
+  { Icono: IconoReloj, titulo: 'Control de acceso', texto: 'Check-in en segundos: muestra foto, días restantes y bloquea membresías vencidas.' },
+  { Icono: IconoCaja, titulo: 'Caja por turnos', texto: 'Cada empleado abre y cierra su propio corte con gastos y efectivo esperado.' },
+  { Icono: IconoCarrito, titulo: 'Punto de venta', texto: 'Vende suplementos y bebidas con lector de código de barras e imprime ticket.' },
+  { Icono: IconoGrafica, titulo: 'Inventario y reportes', texto: 'Kardex de entradas y salidas, alerta de stock bajo y reporte de cada corte.' },
+  { Icono: IconoEscudo, titulo: 'Roles y permisos', texto: 'Define qué puede ver, crear, editar o eliminar cada empleado en cada módulo.' },
+  { Icono: IconoWifiOff, titulo: 'Funciona sin internet', texto: 'Tus datos viven en tu computadora. El internet solo se usa para validar la licencia.' },
+];
+
+const PASOS = [
+  { Icono: IconoWhatsApp, titulo: 'Elige tu plan', texto: 'Escríbenos por WhatsApp y elige el plan que mejor se adapte a tu negocio.' },
+  { Icono: IconoDescarga, titulo: 'Recibe el instalador y tu llave', texto: 'Te enviamos el programa para Windows y una llave de activación única.' },
+  { Icono: IconoLlave, titulo: 'Activa y empieza', texto: 'Instala, pega tu llave y listo: registra socios y cobra desde el primer día.' },
+];
+
+const PREGUNTAS = [
+  { p: '¿Qué pasa si mi centro se queda sin internet?', r: 'Nada: FitControl trabaja con una base de datos en tu propia computadora y sigue operando al 100 %. Solo necesita conectarse de vez en cuando para validar la licencia (hasta 30 días sin internet).' },
+  { p: '¿Puedo usar mi licencia en varias computadoras?', r: 'Cada licencia se vincula a una sola computadora para evitar copias no autorizadas. Si necesitas más equipos, contrata una licencia adicional.' },
+  { p: '¿Qué pasa si cambio de computadora?', r: 'Escríbenos y liberamos tu licencia para que la actives en el equipo nuevo con la misma llave.' },
+  { p: '¿Dónde se guardan los datos de mis socios?', r: 'En tu computadora, no en la nube. Tú tienes el control de tu información; te recomendamos hacer respaldos periódicos.' },
+  { p: '¿Qué necesito para instalarlo?', r: 'Una computadora con Windows 10 u 11 y SQL Server Express (gratuito; te ayudamos a instalarlo). Para credenciales y tickets, cualquier impresora; para el check-in rápido, un lector de código de barras USB (opcional).' },
+];
 
 export default function LandingPage() {
   const [planes, setPlanes] = useState<Plan[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isMenuOpen, setIsMenuOpen] = useState(false); // Controlador del menú hamburguesa
-
-  const whatsappBaseUrl = "https://api.whatsapp.com/send/?phone=523316919113&type=phone_number&app_absent=0";
-  const txtMatriz = encodeURIComponent("Hola, me interesa recibir más información sobre el sistema FitControl.");
+  const [cargando, setCargando] = useState(true);
+  const [menuAbierto, setMenuAbierto] = useState(false);
 
   useEffect(() => {
-    async function obtenerPlanesPublicos() {
-      try {
-        const { data, error } = await supabase
-          .from('planes')
-          .select('*')
-          .eq('esta_disponible', true)
-          .order('precio', { ascending: true });
-
-        if (!error && data) setPlanes(data);
-      } catch (err) {
-        console.error("Error cargando el catálogo comercial:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    obtenerPlanesPublicos();
+    supabase
+      .from('planes')
+      .select('*')
+      .eq('esta_disponible', true)
+      .order('precio', { ascending: true })
+      .then(({ data }) => { setPlanes((data as Plan[]) ?? []); setCargando(false); });
   }, []);
 
+  useEffect(() => {
+    document.body.style.overflow = menuAbierto ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [menuAbierto]);
+
+  // El plan anual se destaca como recomendado; si no hay, el del medio
+  const destacado = planes.find((p) => p.tipo_plan === 'anual')?.id ?? planes[Math.floor(planes.length / 2)]?.id;
+
   return (
-    <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans antialiased scroll-smooth overflow-x-hidden">
-      
-      {/* BARRA DE NAVEGACIÓN TOTALMENTE CONTROLADA CONTRA DESBORDES */}
-      <nav className="w-full bg-white border-b border-slate-200 sticky top-0 z-50 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-20">
-            
-            {/* Logotipo Principal */}
-            <div className="flex items-center gap-2.5 shrink-0">
-              <Image src="/logo.png" alt="FitControl Logo" width={36} height={36} className="rounded-lg object-contain" />
-              <h1 className="text-xl font-black tracking-wider text-[#232529]">
-                FIT<span className="text-[#F47521]">CONTROL</span>
-              </h1>
-            </div>
+    <div className="bg-white text-slate-900 overflow-x-hidden">
+      {/* ================================================= Navegación */}
+      <header className="sticky top-0 z-40 bg-white/85 backdrop-blur border-b border-slate-200/70">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <a href="#" className="flex items-center gap-2.5">
+            <Image src="/logo.png" alt="FitControl" width={34} height={34} className="rounded-lg" />
+            <span className="text-lg font-bold tracking-wide text-tinta-900">FIT<span className="text-marca-500">CONTROL</span></span>
+          </a>
 
-            {/* Menú para Computadoras (Desktop) */}
-            <div className="hidden md:flex items-center gap-8">
-              <a href="#caracteristicas" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Características</a>
-              <a href="#disciplinas" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Disciplinas</a>
-              <a href="#planes" className="text-sm font-semibold text-slate-600 hover:text-[#F47521] transition">Precios</a>
-              <a 
-                href={`${whatsappBaseUrl}&text=${txtMatriz}`} 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="bg-[#232529] hover:bg-slate-800 text-white font-bold px-5 py-2.5 rounded-xl transition text-xs tracking-wide"
-              >
-                Adquirir Ya
-              </a>
-            </div>
+          <nav className="hidden md:flex items-center gap-8" aria-label="Secciones">
+            {NAV.map((n) => <a key={n.href} href={n.href} className="text-sm font-medium text-slate-600 hover:text-tinta-900 transition">{n.texto}</a>)}
+          </nav>
 
-            {/* Interfaz del Botón de Menú para Celulares (Mobile) */}
-            <div className="md:hidden flex items-center">
-              <button 
-                onClick={() => setIsMenuOpen(!isMenuOpen)}
-                type="button"
-                className="inline-flex items-center justify-center p-2 rounded-xl text-slate-700 hover:bg-slate-100 focus:outline-none transition z-50"
-                aria-label="Abrir Menú"
-              >
-                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  {isMenuOpen ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-                  )}
-                </svg>
-              </button>
-            </div>
+          <div className="hidden md:flex items-center gap-3">
+            <Link href="/login" className="text-sm font-medium text-slate-600 hover:text-tinta-900">Acceso</Link>
+            <a href={enlaceWA(MENSAJE_GENERAL)} target="_blank" rel="noopener noreferrer" className={clasesBoton('oscuro', 'md')}>Cotizar</a>
           </div>
-        </div>
 
-        {/* CORTINA DESPLEGABLE MÓVIL PREMIUM CON BACKDROP BLUR */}
-        {isMenuOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-40 md:hidden flex flex-col justify-start pt-24 px-6 space-y-4">
-            <div className="bg-white rounded-2xl p-6 shadow-2xl flex flex-col gap-4 w-full">
-              <a onClick={() => setIsMenuOpen(false)} href="#caracteristicas" className="block text-base font-bold text-slate-800 py-2.5 border-b border-slate-50">Características</a>
-              <a onClick={() => setIsMenuOpen(false)} href="#disciplinas" className="block text-base font-bold text-slate-800 py-2.5 border-b border-slate-50">Disciplinas</a>
-              <a onClick={() => setIsMenuOpen(false)} href="#planes" className="block text-base font-bold text-slate-800 py-2.5 border-b border-slate-50">Precios</a>
-              <a 
-                onClick={() => setIsMenuOpen(false)}
-                href={`${whatsappBaseUrl}&text=${txtMatriz}`} 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="w-full text-center block bg-[#F47521] text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-orange-500/10 mt-2"
-              >
-                💬 Contactar por WhatsApp
-              </a>
-            </div>
-          </div>
-        )}
-      </nav>
-
-      {/* HERO SECTION COMPACTO Y SIN DESBORDES */}
-      <header className="max-w-7xl mx-auto pt-10 sm:pt-16 pb-20 px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
-        <div className="lg:col-span-5 text-left space-y-5 sm:space-y-6">
-          <span className="bg-orange-100 text-[#F47521] font-bold text-[10px] sm:text-xs uppercase tracking-widest px-3 sm:px-4 py-1.5 rounded-full inline-block">
-            Software de Escritorio Nativo para Windows
-          </span>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-[#232529] leading-tight tracking-tight">
-            Toma el control absoluto de tu centro fitness y <span className="text-[#F47521]">evita pérdidas</span>
-          </h2>
-          <p className="text-sm sm:text-base md:text-lg text-slate-600 leading-relaxed">
-            Una herramienta diseñada para dueños de negocios exigentes. Monitorea ingresos de caja blindados, automatiza el stock de tu inventario y controla los accesos en milisegundos sin depender de conexiones lentas a internet.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
-            <a href="#planes" className="w-full sm:w-auto text-center bg-[#F47521] hover:bg-[#d65f13] text-white font-bold px-8 py-4 rounded-xl transition shadow-lg shadow-orange-500/10 text-sm tracking-wide">
-              Comenzar Ahora
-            </a>
-            <a href="#caracteristicas" className="w-full sm:w-auto text-center bg-white hover:bg-slate-100 text-[#232529] font-bold px-8 py-4 rounded-xl transition border border-slate-200 text-sm tracking-wide">
-              Conocer Módulos
-            </a>
-          </div>
-        </div>
-
-        {/* PORTADA DIGITAL ADAPTATIVA */}
-        <div className="lg:col-span-7 relative w-full overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-tr from-orange-400/10 to-transparent rounded-3xl blur-2xl -z-10" />
-          <div className="bg-white rounded-2xl p-2 sm:p-3 shadow-xl border border-slate-200/80">
-            <div className="bg-slate-100 rounded-xl overflow-hidden border border-slate-200 aspect-[16/10] relative flex items-center justify-center p-2 sm:p-5">
-              
-              <div className="w-full h-full bg-slate-50 flex flex-col justify-between text-[9px] sm:text-[11px] space-y-3">
-                <div className="flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-xs border border-slate-200/60">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-orange-500" />
-                    <span className="font-bold text-slate-800">FitControl Pro v1.0</span>
-                  </div>
-                  <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-bold hidden sm:inline">● En Producción</span>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 my-1">
-                  <div className="bg-white p-2 rounded-lg border border-slate-200 flex flex-col justify-between shadow-2xs">
-                    <span className="text-slate-400 font-medium scale-90 origin-left">Caja Global</span>
-                    <span className="font-black text-slate-800 sm:text-xs">$4,250</span>
-                  </div>
-                  <div className="bg-white p-2 rounded-lg border border-slate-200 flex flex-col justify-between shadow-2xs">
-                    <span className="text-slate-400 font-medium scale-90 origin-left">Socios</span>
-                    <span className="font-black text-[#F47521] sm:text-xs">184 Activos</span>
-                  </div>
-                  <div className="bg-white p-2 rounded-lg border border-slate-200 flex flex-col justify-between shadow-2xs">
-                    <span className="text-slate-400 font-medium scale-90 origin-left">Alertas</span>
-                    <span className="font-black text-rose-600 sm:text-xs">3 Items</span>
-                  </div>
-                </div>
-
-                <div className="bg-white p-2 rounded-lg border border-slate-200 overflow-hidden flex flex-col justify-center flex-1">
-                  <span className="font-bold text-slate-700 mb-1 block">Último Acceso</span>
-                  <div className="flex justify-between p-1.5 bg-emerald-50/50 border border-emerald-100 rounded-md text-[8px] sm:text-[10px]">
-                    <span className="font-semibold text-slate-700 truncate max-w-[65%]">Marco Antonio (CrossFit)</span>
-                    <span className="text-emerald-600 font-bold shrink-0">Permitido</span>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
+          <button type="button" onClick={() => setMenuAbierto(true)} className="md:hidden p-2 -mr-2 rounded-lg text-tinta-900" aria-label="Abrir menú">
+            <IconoMenu className="w-6 h-6" />
+          </button>
         </div>
       </header>
 
-      {/* TARJETAS ROI (GRID EFICIENTE EN MÓVILES) */}
-      <section className="bg-[#232529] text-white py-12 sm:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-2 md:grid-cols-4 gap-y-10 gap-x-4 text-center">
-          <div>
-            <p className="text-3xl sm:text-4xl md:text-5xl font-black text-[#F47521]">0%</p>
-            <p className="text-[10px] sm:text-xs text-slate-400 mt-1 uppercase tracking-wider font-bold">Fugas en Caja</p>
+      {/* Menú móvil a pantalla completa */}
+      {menuAbierto && (
+        <div className="fixed inset-0 z-50 bg-white flex flex-col md:hidden animate-aparecer">
+          <div className="h-16 px-4 flex items-center justify-between border-b border-slate-100">
+            <span className="text-lg font-bold tracking-wide text-tinta-900">FIT<span className="text-marca-500">CONTROL</span></span>
+            <button type="button" onClick={() => setMenuAbierto(false)} className="p-2 -mr-2" aria-label="Cerrar menú"><IconoCerrar className="w-6 h-6" /></button>
           </div>
-          <div>
-            <p className="text-3xl sm:text-4xl md:text-5xl font-black text-[#F47521]">&lt; 1s</p>
-            <p className="text-[10px] sm:text-xs text-slate-400 mt-1 uppercase tracking-wider font-bold">Validación Socio</p>
+          <nav className="flex-1 px-4 py-6 flex flex-col" aria-label="Secciones">
+            {NAV.map((n) => (
+              <a key={n.href} href={n.href} onClick={() => setMenuAbierto(false)} className="flex items-center justify-between py-4 text-lg font-semibold text-tinta-900 border-b border-slate-100">
+                {n.texto} <IconoChevron className="w-5 h-5 text-slate-300" />
+              </a>
+            ))}
+            <Link href="/login" onClick={() => setMenuAbierto(false)} className="py-4 text-lg font-semibold text-slate-500">Acceso administradores</Link>
+          </nav>
+          <div className="p-4 border-t border-slate-100 pb-seguro">
+            <a href={enlaceWA(MENSAJE_GENERAL)} target="_blank" rel="noopener noreferrer" className={clasesBoton('primario', 'lg', 'w-full')}>
+              <IconoWhatsApp className="w-5 h-5" /> Cotizar por WhatsApp
+            </a>
           </div>
-          <div>
-            <p className="text-3xl sm:text-4xl md:text-5xl font-black text-[#F47521]">100%</p>
-            <p className="text-[10px] sm:text-xs text-slate-400 mt-1 uppercase tracking-wider font-bold">Autónomo s/Net</p>
+        </div>
+      )}
+
+      {/* ================================================= Hero */}
+      <section className="relative">
+        <div className="absolute inset-x-0 top-0 h-[620px] bg-gradient-to-b from-marca-50 via-white to-white -z-10" />
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-12 sm:pt-20 pb-16 sm:pb-24 grid lg:grid-cols-12 gap-12 items-center">
+          <div className="lg:col-span-6 space-y-6">
+            <span className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-marca-700 ring-1 ring-marca-200">
+              <IconoComputadora className="w-4 h-4" /> Programa para Windows · funciona sin internet
+            </span>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-tinta-900 leading-[1.05]">
+              Administra tu centro de entrenamiento <span className="text-marca-500">sin complicaciones</span>
+            </h1>
+            <p className="text-lg text-slate-600 max-w-xl">
+              Para gimnasios, boxes, estudios, academias y cualquier centro fitness. Socios, accesos, caja, punto de venta e inventario en un solo programa. Cada peso registrado y cada empleado con sus propios permisos.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <a href="#precios" className={clasesBoton('primario', 'lg')}>Ver precios</a>
+              <a href={enlaceWA(MENSAJE_GENERAL)} target="_blank" rel="noopener noreferrer" className={clasesBoton('secundario', 'lg')}>
+                <IconoWhatsApp className="w-5 h-5 text-emerald-600" /> Hablar con un asesor
+              </a>
+            </div>
+            <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-600">
+              {['Instalación guiada', 'Tus datos en tu PC', 'Soporte por WhatsApp'].map((t) => (
+                <li key={t} className="flex items-center gap-1.5"><IconoCheck className="w-4 h-4 text-emerald-600" /> {t}</li>
+              ))}
+            </ul>
           </div>
-          <div>
-            <p className="text-3xl sm:text-4xl md:text-5xl font-black text-[#F47521]">+25%</p>
-            <p className="text-[10px] sm:text-xs text-slate-400 mt-1 uppercase tracking-wider font-bold">Renovaciones</p>
+
+          <div className="lg:col-span-6">
+            <MaquetaApp />
           </div>
         </div>
       </section>
 
-      {/* MÓDULOS DE CARACTERÍSTICAS RE-BALANCEADOS */}
-      <section id="caracteristicas" className="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 scroll-mt-16">
-        <div className="text-center max-w-2xl mx-auto mb-16">
-          <h3 className="text-2xl sm:text-3xl md:text-4xl font-black text-[#232529]">Módulos potentes integrados</h3>
-          <p className="text-slate-500 mt-2 text-sm sm:text-base">Un todo en uno diseñado específicamente para eliminar la carga administrativa de tu staff.</p>
-        </div>
-
-        <div className="space-y-16 sm:space-y-24">
-          {/* Módulo de Caja */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-center">
-            <div className="bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 aspect-video relative shadow-inner flex items-center justify-center">
-              <div className="absolute inset-0 bg-gradient-to-br from-black/10 to-black/40 flex items-end p-4 sm:p-6 z-30">
-                <span className="bg-white/90 text-slate-900 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm">Pantalla de Finanzas</span>
+      {/* ================================================= Funciones */}
+      <section id="funciones" className="scroll-mt-20 py-16 sm:py-24 bg-slate-50 border-y border-slate-200/70">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <EncabezadoSeccion etiqueta="Todo en uno" titulo="Lo que tu recepción necesita, en un solo lugar" texto="Diseñado para que tu equipo aprenda a usarlo en minutos." />
+          <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {FUNCIONES.map(({ Icono, titulo, texto }) => (
+              <div key={titulo} className="rounded-2xl bg-white p-6 border border-slate-200 hover:border-marca-200 hover:shadow-sm transition">
+                <span className="w-11 h-11 rounded-xl bg-marca-50 text-marca-600 flex items-center justify-center"><Icono className="w-6 h-6" /></span>
+                <h3 className="mt-4 font-semibold text-tinta-900">{titulo}</h3>
+                <p className="mt-1.5 text-sm text-slate-600 leading-relaxed">{texto}</p>
               </div>
-              <span className="text-slate-300 font-mono text-xs">Captura de Caja</span>
-            </div>
-            <div className="space-y-3 sm:space-y-4">
-              <div className="text-xl sm:text-2xl font-black text-[#232529]">Cortes de Caja Cifrados y Auditoría Absoluta</div>
-              <p className="text-slate-600 text-xs sm:text-sm leading-relaxed">
-                Cada moneda cuenta. FitControl bloquea el sistema contable por turnos de operarios. Registra cobros precisos divididos por métodos de pago (Efectivo, Tarjeta, Transferencia), impidiendo alteraciones de tiquets sin la clave máster del dueño.
-              </p>
-              <ul className="space-y-2 text-xs font-bold text-slate-700">
-                <li className="flex items-center gap-2">✓ Reportes instantáneos exportables a Excel</li>
-                <li className="flex items-center gap-2">✓ Registro estricto de gastos menores salientes</li>
-              </ul>
-            </div>
+            ))}
           </div>
 
-          {/* Módulo de Suplementos */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-center">
-            <div className="bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 aspect-video relative shadow-inner flex items-center justify-center md:order-2">
-              <div className="absolute inset-0 bg-gradient-to-br from-black/10 to-black/40 flex items-end p-4 sm:p-6 z-30">
-                <span className="bg-white/90 text-slate-900 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm">Tienda / Cafetería</span>
-              </div>
-              <span className="text-slate-300 font-mono text-xs">Captura de Inventario</span>
-            </div>
-            <div className="space-y-3 sm:space-y-4 md:order-1">
-              <div className="text-xl sm:text-2xl font-black text-[#232529]">Punto de Venta e Inventario Inteligente</div>
-              <p className="text-slate-600 text-xs sm:text-sm leading-relaxed">
-                Multiplica tus ganancias vendiendo bebidas, suplementos o accesorios deportivos. El inventario descuenta productos en tiempo real al venderlos y te muestra una alerta visual roja en la barra superior cuando el stock de un producto llegue a su límite mínimo.
-              </p>
-              <ul className="space-y-2 text-xs font-bold text-slate-700">
-                <li className="flex items-center gap-2">✓ Alertas de stock mínimo configurables</li>
-                <li className="flex items-center gap-2">✓ Historial de compras amarrado al socio</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* DISCIPLINAS MULTIFORMATO */}
-      <section id="disciplinas" className="bg-slate-100 py-20 border-y border-slate-200 scroll-mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-2xl mx-auto mb-12">
-            <h3 className="text-2xl sm:text-3xl font-black text-[#232529]">Adaptable a cualquier formato Fitness</h3>
-            <p className="text-slate-500 mt-2 text-sm">No importa cómo cobres ni cómo entrenen, FitControl tiene la flexibilidad que buscas.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
-            <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-2xs border border-slate-200/60">
-              <div className="text-base sm:text-lg font-bold text-[#232529] mb-2.5 flex items-center gap-2"><span>🏋️‍♂️</span> Gimnasios Tradicionales</div>
-              <p className="text-xs text-slate-600 leading-relaxed">Perfecto para cobros mensuales fijos por uso de aparatos libres e integrados. Registro de visitas masivas rápidas desde recepción.</p>
-            </div>
-            <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-2xs border border-slate-200/60">
-              <div className="text-base sm:text-lg font-bold text-[#232529] mb-2.5 flex items-center gap-2"><span>🔥</span> Boxes de CrossFit</div>
-              <p className="text-xs text-slate-600 leading-relaxed">Controla cuotas basadas en frecuencias (ej: 3 clases por semana o pases ilimitados) y vende tus suples y bebidas.</p>
-            </div>
-            <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-2xs border border-slate-200/60">
-              <div className="text-base sm:text-lg font-bold text-[#232529] mb-2.5 flex items-center gap-2"><span>🧘</span> Estudios de Yoga / Pilates</div>
-              <p className="text-xs text-slate-600 leading-relaxed">Lleva un control estricto por tiqueteras, bloques de clases o periodos especiales de entrenamiento personalizados.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* PLANES SAAS REMOTOS EN TIEMPO REAL */}
-      <section id="planes" className="max-w-6xl mx-auto px-4 py-20 scroll-mt-24">
-        <h3 className="text-2xl sm:text-3xl font-black text-center mb-3 text-[#232529]">Precios de Licenciamiento</h3>
-        <p className="text-center text-slate-500 mb-12 max-w-md mx-auto text-sm">Catálogo oficial en pesos mexicanos. Elige el esquema ideal para tu negocio.</p>
-        
-        {loading ? (
-          <div className="text-center text-slate-400 text-xs py-12 font-mono animate-pulse">Consultando servidores...</div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
-            {planes.map((plan) => {
-              const txtDinamico = encodeURIComponent(`Hola, me interesa adquirir la licencia del plan "${plan.nombre}" para mi centro deportivo.`);
-              return (
-                <div 
-                  key={plan.id} 
-                  className={`bg-white p-6 sm:p-8 rounded-2xl flex flex-col justify-between shadow-xs transition border ${
-                    plan.tipo_plan === 'anual' ? 'border-2 border-orange-500 shadow-lg shadow-orange-500/5' : 'border-slate-200'
-                  }`}
-                >
-                  <div>
-                    <h4 className="text-lg sm:text-xl font-bold text-[#232529] mb-2">{plan.nombre}</h4>
-                    <div className="flex items-baseline gap-1.5 mb-4">
-                      <span className="text-3xl sm:text-4xl font-black text-[#232529] font-mono">
-                        ${Number(plan.precio).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                      </span>
-                      <span className="text-[10px] font-bold uppercase text-slate-400 font-mono">
-                        / {plan.tipo_plan === 'permanente' ? 'Único' : plan.tipo_plan}
-                      </span>
-                    </div>
-                    <p className="text-slate-600 text-xs sm:text-sm leading-relaxed border-t border-slate-50 pt-3">
-                      {plan.descripcion || 'Incluye acceso completo a los módulos contables, de accesos e inventario.'}
-                    </p>
-                  </div>
-                  <a 
-                    href={`${whatsappBaseUrl}&text=${txtDinamico}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`w-full mt-6 sm:mt-8 font-bold py-3 rounded-xl transition text-xs sm:text-sm block text-center uppercase tracking-wider ${
-                      plan.tipo_plan === 'anual' 
-                        ? 'bg-[#F47521] hover:bg-[#d65f13] text-white shadow-md' 
-                        : 'bg-slate-100 hover:bg-slate-200 text-[#232529]'
-                    }`}
-                  >
-                    Adquirir Licencia
-                  </a>
+          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              { e: '🏋️', t: 'Gimnasios', d: 'Mensualidades, visitas rápidas desde recepción y venta de suplementos.' },
+              { e: '🔥', t: 'CrossFit y funcional', d: 'Planes por periodo, control de asistencia y tienda integrada.' },
+              { e: '🧘', t: 'Yoga, pilates y barre', d: 'Paquetes con fechas personalizadas y seguimiento de cada alumno.' },
+              { e: '🥋', t: 'Artes marciales y box', d: 'Inscripciones, mensualidades por alumno y credencial con su foto.' },
+              { e: '💃', t: 'Danza y baile', d: 'Alumnos por paquete, renovaciones y control de quién asistió.' },
+              { e: '🚴', t: 'Cycling y entrenamiento personal', d: 'Membresías por periodo, ventas en mostrador y caja por turno.' },
+            ].map((x) => (
+              <div key={x.t} className="flex gap-4 rounded-2xl bg-tinta-900 text-white p-6">
+                <span className="text-2xl" aria-hidden="true">{x.e}</span>
+                <div>
+                  <h3 className="font-semibold">{x.t}</h3>
+                  <p className="mt-1 text-sm text-slate-400">{x.d}</p>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* BLOQUE DE PREGUNTAS FRECUENTES COHESIVO */}
-      <section className="bg-white py-20 border-t border-slate-200">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6">
-          <h3 className="text-2xl sm:text-3xl font-black text-center text-[#232529] mb-12">Preguntas Frecuentes</h3>
-          <div className="space-y-4 sm:space-y-6">
-            <div className="p-4 sm:p-5 bg-slate-50 rounded-xl border border-slate-200/60">
-              <h5 className="font-bold text-[#232529] text-xs sm:text-sm mb-1">¿Qué pasa si mi gimnasio se queda sin internet?</h5>
-              <p className="text-xs text-slate-500 leading-relaxed">Nada. Al ser un desarrollo nativo en C# con base de datos local, el programa sigue operando al 100% localmente. Solo requiere red para validar tu licencia periódicamente.</p>
-            </div>
-            <div className="p-4 sm:p-5 bg-slate-50 rounded-xl border border-slate-200/60">
-              <h5 className="font-bold text-[#232529] text-xs sm:text-sm mb-1">¿Puedo usar mi licencia en múltiples PCs?</h5>
-              <p className="text-xs text-slate-500 leading-relaxed">Cada licencia está ligada a un identificador de hardware único (Hardware ID). Esto asegura que la clave se active de manera segura en un solo equipo físico para evitar piratería.</p>
-            </div>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* PIE DE PÁGINA */}
-      <footer className="text-center py-6 text-[10px] sm:text-xs text-slate-400 border-t border-slate-100 bg-white">
-        &copy; {new Date().getFullYear()} FITCONTROL. Todos los derechos reservados.
+      {/* ================================================= Cómo empezar */}
+      <section id="como-empezar" className="scroll-mt-20 py-16 sm:py-24">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <EncabezadoSeccion etiqueta="Sin complicaciones" titulo="Empieza hoy en 3 pasos" />
+          <ol className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+            {PASOS.map(({ Icono, titulo, texto }, i) => (
+              <li key={titulo} className="relative">
+                <div className="flex items-center gap-4">
+                  <span className="w-12 h-12 rounded-2xl bg-marca-500 text-white flex items-center justify-center shadow-lg shadow-marca-500/25"><Icono className="w-6 h-6" /></span>
+                  <span className="text-sm font-semibold text-marca-600">Paso {i + 1}</span>
+                </div>
+                <h3 className="mt-5 text-lg font-semibold text-tinta-900">{titulo}</h3>
+                <p className="mt-1.5 text-slate-600">{texto}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      {/* ================================================= Precios */}
+      <section id="precios" className="scroll-mt-20 py-16 sm:py-24 bg-slate-50 border-y border-slate-200/70">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+          <EncabezadoSeccion etiqueta="Precios" titulo="Un plan para cada etapa de tu negocio" texto="Precios en pesos mexicanos. Sin costos ocultos." />
+
+          {cargando ? (
+            <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">{[0, 1, 2].map((i) => <div key={i} className="h-80 rounded-3xl bg-slate-200/60 animate-pulse" />)}</div>
+          ) : planes.length === 0 ? (
+            <div className="mt-12 text-center">
+              <a href={enlaceWA('Hola, quiero conocer los precios de FitControl.')} target="_blank" rel="noopener noreferrer" className={clasesBoton('primario', 'lg')}>Solicitar cotización</a>
+            </div>
+          ) : (
+            <div className={cx('mt-12 grid grid-cols-1 gap-6',
+              planes.length >= 4 ? 'md:grid-cols-2 xl:grid-cols-4 xl:gap-4 xl:-mx-12'
+                : planes.length === 3 ? 'lg:grid-cols-3'
+                : planes.length === 2 ? 'md:grid-cols-2 max-w-3xl mx-auto'
+                : 'max-w-md mx-auto')}>
+              {planes.map((plan) => {
+                const top = plan.id === destacado && planes.length > 1;
+                return (
+                  <div key={plan.id} className={cx('relative flex flex-col rounded-3xl p-7 sm:p-8', top ? 'bg-tinta-900 text-white shadow-2xl shadow-tinta-900/20 lg:-my-4 lg:py-12' : 'bg-white border border-slate-200')}>
+                    {top && <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-marca-500 px-3 py-1 text-xs font-semibold text-white">Más elegido</span>}
+                    <p className={cx('text-sm font-semibold', top ? 'text-marca-500' : 'text-marca-600')}>{NOMBRES_TIPO_PLAN[plan.tipo_plan]}</p>
+                    <h3 className={cx('mt-1 text-xl font-semibold', top ? 'text-white' : 'text-tinta-900')}>{plan.nombre}</h3>
+                    <p className="mt-5 flex items-baseline gap-1.5">
+                      <span className="text-4xl font-bold tracking-tight tabular-nums">{formatoDinero(Number(plan.precio))}</span>
+                      <span className={cx('text-sm', top ? 'text-slate-400' : 'text-slate-500')}>{SUFIJO_PRECIO[plan.tipo_plan]}</span>
+                    </p>
+                    <p className={cx('mt-5 text-sm leading-relaxed flex-1', top ? 'text-slate-300' : 'text-slate-600')}>
+                      {plan.descripcion || 'Incluye todos los módulos: socios, accesos, caja, punto de venta, inventario y reportes.'}
+                    </p>
+                    <a
+                      href={enlaceWA(`Hola, me interesa el plan "${plan.nombre}" de FitControl para mi centro de entrenamiento.`)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={clasesBoton(top ? 'primario' : 'secundario', 'lg', 'mt-8 w-full')}
+                    >
+                      Elegir este plan
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ================================================= Preguntas */}
+      <section id="preguntas" className="scroll-mt-20 py-16 sm:py-24">
+        <div className="mx-auto max-w-3xl px-4 sm:px-6">
+          <EncabezadoSeccion etiqueta="Dudas" titulo="Preguntas frecuentes" />
+          <div className="mt-10 divide-y divide-slate-200 border-y border-slate-200">
+            {PREGUNTAS.map(({ p, r }) => (
+              <details key={p} className="group py-5">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-semibold text-tinta-900 [&::-webkit-details-marker]:hidden">
+                  {p}
+                  <span className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0 transition group-open:rotate-90 group-open:bg-marca-50 group-open:text-marca-600">
+                    <IconoChevron className="w-4 h-4" />
+                  </span>
+                </summary>
+                <p className="mt-3 text-slate-600 leading-relaxed pr-12">{r}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================= Llamado final */}
+      <section className="px-4 sm:px-6 lg:px-8 pb-16 sm:pb-24">
+        <div className="mx-auto max-w-5xl relative overflow-hidden rounded-3xl bg-tinta-900 px-6 py-12 sm:p-16 text-center">
+          <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-marca-500/25 blur-3xl" />
+          <h2 className="relative text-3xl sm:text-4xl font-bold text-white">¿Listo para ordenar tu negocio fitness?</h2>
+          <p className="relative mt-3 text-slate-400 max-w-xl mx-auto">Te ayudamos a instalarlo y a cargar tus primeros socios.</p>
+          <a href={enlaceWA(MENSAJE_GENERAL)} target="_blank" rel="noopener noreferrer" className={clasesBoton('primario', 'lg', 'relative mt-8 w-full sm:w-auto')}>
+            <IconoWhatsApp className="w-5 h-5" /> Escríbenos por WhatsApp
+          </a>
+        </div>
+      </section>
+
+      {/* ================================================= Pie */}
+      <footer className="border-t border-slate-200">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500 pb-24 sm:pb-8">
+          <div className="flex items-center gap-2.5">
+            <Image src="/logo.png" alt="" width={24} height={24} className="rounded-md" />
+            <span>© {new Date().getFullYear()} FitControl. Todos los derechos reservados.</span>
+          </div>
+          <div className="flex gap-6">
+            {NAV.slice(0, 3).map((n) => <a key={n.href} href={n.href} className="hover:text-tinta-900">{n.texto}</a>)}
+            <Link href="/login" className="hover:text-tinta-900">Acceso</Link>
+          </div>
+        </div>
       </footer>
 
+      {/* Botón flotante de WhatsApp en celular */}
+      <a
+        href={enlaceWA(MENSAJE_GENERAL)}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Escribir por WhatsApp"
+        className="sm:hidden fixed bottom-5 right-5 z-30 w-14 h-14 rounded-full bg-emerald-500 text-white shadow-xl shadow-emerald-500/30 flex items-center justify-center"
+      >
+        <IconoWhatsApp className="w-7 h-7" />
+      </a>
+    </div>
+  );
+}
+
+function EncabezadoSeccion({ etiqueta, titulo, texto }: { etiqueta: string; titulo: string; texto?: string }) {
+  return (
+    <div className="text-center max-w-2xl mx-auto">
+      <p className="text-sm font-semibold text-marca-600">{etiqueta}</p>
+      <h2 className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight text-tinta-900">{titulo}</h2>
+      {texto && <p className="mt-3 text-slate-600">{texto}</p>}
+    </div>
+  );
+}
+
+/** Ilustración de la app de escritorio hecha con HTML (se adapta a cualquier pantalla y no pesa). */
+function MaquetaApp() {
+  return (
+    <div className="relative" aria-hidden="true">
+      <div className="absolute -inset-6 bg-gradient-to-tr from-marca-500/20 to-transparent rounded-[2rem] blur-2xl -z-10" />
+      <div className="rounded-2xl bg-white shadow-2xl shadow-tinta-900/10 ring-1 ring-slate-200 overflow-hidden">
+        <div className="h-8 flex items-center gap-1.5 px-3 bg-slate-100 border-b border-slate-200">
+          <span className="w-2.5 h-2.5 rounded-full bg-rose-400" /><span className="w-2.5 h-2.5 rounded-full bg-amber-400" /><span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+          <span className="ml-3 text-[10px] text-slate-500 font-medium">FitControl</span>
+        </div>
+        <div className="flex text-[10px] sm:text-xs">
+          <div className="hidden sm:flex w-28 flex-col gap-1 bg-tinta-900 p-2.5">
+            {['Inicio', 'Socios', 'Accesos', 'Ventas', 'Caja', 'Reportes'].map((m, i) => (
+              <span key={m} className={cx('rounded-md px-2 py-1.5', i === 0 ? 'bg-marca-500 text-white font-semibold' : 'text-slate-400')}>{m}</span>
+            ))}
+          </div>
+          <div className="flex-1 bg-slate-50 p-3 sm:p-4 space-y-3">
+            <div className="grid grid-cols-3 gap-2">
+              {[['Socios activos', '184', 'text-tinta-900'], ['Ingresos hoy', '$4,250', 'text-emerald-600'], ['Visitas hoy', '67', 'text-marca-600']].map(([t, v, c]) => (
+                <div key={t} className="rounded-lg bg-white p-2 sm:p-2.5 ring-1 ring-slate-200">
+                  <p className="text-slate-500 truncate">{t}</p>
+                  <p className={cx('mt-0.5 text-sm sm:text-lg font-bold', c)}>{v}</p>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-lg bg-white p-2.5 sm:p-3 ring-1 ring-slate-200">
+              <p className="font-semibold text-tinta-900 mb-2">Visitas de la semana</p>
+              <div className="flex items-end gap-1.5 h-16 sm:h-20">
+                {[45, 70, 55, 85, 65, 95, 40].map((h, i) => (
+                  <div key={i} className="flex-1 rounded-t bg-marca-500/80" style={{ height: `${h}%` }} />
+                ))}
+              </div>
+            </div>
+            <div className="rounded-lg bg-white ring-1 ring-slate-200 divide-y divide-slate-100">
+              {[['Ana Rodríguez', 'Acceso permitido', 'text-emerald-600'], ['Luis Herrera', 'Vence en 3 días', 'text-amber-600']].map(([n, e, c]) => (
+                <div key={n} className="flex items-center justify-between px-2.5 py-2">
+                  <span className="flex items-center gap-2 text-tinta-900"><span className="w-5 h-5 rounded-full bg-slate-200" />{n}</span>
+                  <span className={cx('font-semibold', c)}>{e}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
