@@ -1,14 +1,9 @@
 'use client'; // <-- Esto le dice a Next.js que este es un componente interactivo de React
 
 import { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-
-// Inicializamos el conector rápido de Supabase usando tus variables del .env.local
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import { supabase } from '@/lib/supabase'; // misma instancia (y misma sesión) que el resto del panel
 
 export default function LoginPage() {
   // Estados de React para capturar los datos del formulario

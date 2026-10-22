@@ -13,7 +13,7 @@ interface Cliente {
 }
 
 export default function ClientesPage() {
-  const [userRole, setUserRole] = useState<string>('super_admin'); 
+  const [userRole, setUserRole] = useState<string>(''); // sin privilegios hasta confirmar el rol 
   const [isModalOpen, setIsModalOpen] = useState(false);
   
   // Estado para saber si estamos EDITANDO o CREANDO un cliente

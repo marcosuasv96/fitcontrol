@@ -14,7 +14,7 @@ interface Plan {
 }
 
 export default function PlanesPage() {
-  const [userRole, setUserRole] = useState<string>('super_admin'); 
+  const [userRole, setUserRole] = useState<string>(''); // sin privilegios hasta confirmar el rol 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [planEnEdicion, setPlanEnEdicion] = useState<Plan | null>(null);
 

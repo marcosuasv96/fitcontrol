@@ -3,13 +3,8 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter, usePathname } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-);
+import { supabase } from '@/lib/supabase'; // misma instancia (y misma sesión) que el resto del panel
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -43,7 +38,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       if (perfil && perfil.rol) {
         setUserRole(perfil.rol.toLowerCase());
       } else {
-        setUserRole(user.role || 'admin');
+        setUserRole('sin rol'); // sin fila en perfiles: Supabase (RLS) no le dará acceso a datos
       }
     }
     
